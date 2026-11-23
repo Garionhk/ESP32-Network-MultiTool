@@ -1,0 +1,41 @@
+ESP32-S3 Network MultiTool
+==========================
+
+This firmware as a whole is licensed under the GNU Affero General Public
+License v3.0 (see LICENSE), because it includes code from
+s60sc/ESP32_AdBlocker, which is AGPL-3.0:
+
+  https://github.com/s60sc/ESP32_AdBlocker  (s60sc and dateno1)
+  -> blocklist.cpp, blparse.h, sinkhole.cpp (the blocklist engine and the
+     original DNS responder, via ESP32 AdBlocker)
+
+It also includes code from two projects by the same author that were
+released under the Apache License, Version 2.0 (see LICENSE-APACHE-2.0.txt).
+Apache-2.0 code may be combined into a GPLv3-family work; these notices are
+kept as that licence requires:
+
+  ESP32 WOL-NTFY 2.0.1 (Apache-2.0)
+  -> wol.cpp, wol.h, wolstore.cpp, wolstore.h (were store.cpp / store.h),
+     wol_cmd.cpp (from its commands.cpp)
+  -> the settings / setup-portal / ntfy-stream pattern shared by
+     settings.cpp, webconfig.cpp and ntfy.cpp
+  Changes: constants renamed WOL_*, store namespace renamed wolstore,
+  reserved command words rejected as names, clear() added, commands moved
+  behind the MultiTool command router.
+
+  SiteCheck 2.0.0 (Apache-2.0)
+  -> sitelogic.h, sitestore.cpp, sitecheck.cpp, site_cmd.cpp (from its
+     checks.ino, storage.ino, report.ino and commands.ino)
+  Changes: rewritten for a FreeRTOS task, NVS settings, the shared ntfy
+  stream and outbox, LittleFS /sites.json, a minimal HTTP probe with
+  local-name resolution, and the "site" command word.
+
+Third-party libraries linked into the released binaries (their source is
+not in this repository):
+  ArduinoJson by Benoit Blanchon (MIT)       https://arduinojson.org
+  ESPping by dvarrel (Apache-2.0)            https://github.com/dvarrel/ESPping
+  Arduino core for the ESP32 by Espressif (LGPL-2.1, with ESP-IDF
+  components under Apache-2.0)               https://github.com/espressif/arduino-esp32
+
+Default blocklist source: Hagezi DNS blocklists
+  https://github.com/hagezi/dns-blocklists

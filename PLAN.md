@@ -8,7 +8,9 @@ One ESP32-S3 N16R8 (16 MB flash, 8 MB OPI PSRAM) running all three existing proj
 | `ESP32 WOL-NTFY` | 2.0.1 | Wake-on-LAN over ntfy, up to 16 saved computers |
 | `esp8266 site check` (ESP32S3-N16R8 build) | 2.0.0 | Up to 30 HTTP/HTTPS/ping monitors, down/recovery alerts, daily digest |
 
-Nothing is coded yet. This file is the plan to review first.
+**Progress (2026-11-23):** phases 1–4 and 6 are done (1.0.0-rc1, 457 host checks). Phase 5,
+the 48-hour soak test on hardware, has **not** been run; nothing has been flashed to a board
+yet.
 
 ---
 
