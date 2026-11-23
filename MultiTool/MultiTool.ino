@@ -27,6 +27,8 @@
 #include "settings.h"
 #include "webconfig.h"
 #include "wolstore.h"
+#include "sitecheck.h"
+#include "sitestore.h"
 
 // What the device is currently doing. WiFi can come and go while the portal
 // stays up, so the transitions need to be explicit.
@@ -238,6 +240,7 @@ static void goOnline() {
   bool timeOk = syncClock();
   if (g_settings.adblockOn) dot::begin();   // needs the clock for its certificate check
   ntfy::begin(commands::handle);
+  if (g_settings.siteOn) sitecheck::begin();   // first pass SITE_FIRST_PASS_MS from now
 
   if (!announced) {
     announced = true;
@@ -294,6 +297,7 @@ void setup() {
   // PSRAM is handed out in this order; anything the other features need has
   // to be claimed here, before the blocklist takes the rest.
   ntfy::prealloc();
+  sitestore::begin();   // ~4 KB PSRAM, and mounts LittleFS (the blocklist shares it)
   if (g_settings.adblockOn) {
     querylog::begin(QUERYLOG_ENTRIES);
     sinkhole::prealloc();

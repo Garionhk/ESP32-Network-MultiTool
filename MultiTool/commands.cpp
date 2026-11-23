@@ -9,6 +9,8 @@
 #include "ntfy.h"
 #include "scheduler.h"
 #include "settings.h"
+#include "site_cmd.h"
+#include "sitestore.h"
 #include "util.h"
 #include "webconfig.h"
 #include "wol_cmd.h"
@@ -65,10 +67,11 @@ void replyHelp() {
       "status             address, features, schedule, memory\n";
   if (g_settings.adblockOn) help += adblock_cmd::helpLines();
   if (g_settings.wolOn) help += wol_cmd::helpLines();
+  if (g_settings.siteOn) help += site_cmd::helpLines();
   help +=
       "reboot             restart now\n"
       "factoryreset       wipe settings, reboot into setup\n"
-      "                   (\"factoryreset all\" also forgets saved computers)\n"
+      "                   (\"factoryreset all\" also forgets computers and sites)\n"
       "help               this message";
   if (g_settings.adblockOn) help += "\n\nA leading www. is ignored, so check example.com covers both.";
   if (g_settings.wolOn) {
@@ -86,17 +89,32 @@ void doReboot(const Ctx& c) {
 void doFactoryReset(const Ctx& c) {
   if (!requireSecret(c, "using factoryreset", "Factory reset")) return;
   bool all = c.n >= 2 && c.tokens[1].equalsIgnoreCase("all");
-  ntfy::publish(String("Clearing settings") + (all ? " and saved computers" : "") +
+  ntfy::publish(String("Clearing settings") + (all ? ", saved computers and sites" : "") +
                     ". Rebooting into setup mode -- join the \"" + webconfig::apSsid() +
                     "\" network to reconfigure. The blocklist and custom list stay in flash.",
                 "Factory reset");
   ntfy::flush(5000);    // the reply has to leave before the restart
-  if (all) wolstore::clear();
+  if (all) {
+    wolstore::clear();
+    sitestore::clear();
+  }
   settings_clear();
   ESP.restart();
 }
 
 }  // namespace
+
+String afterWords(const String& text, int words) {
+  unsigned int i = 0, len = text.length();
+  for (int w = 0; w < words; w++) {
+    while (i < len && isspace((unsigned char)text[i])) i++;
+    while (i < len && !isspace((unsigned char)text[i])) i++;
+  }
+  String out;
+  for (; i < len; i++) out += text[i];
+  out.trim();
+  return out;
+}
 
 bool requireSecret(const Ctx& c, const char* what, const char* title) {
   if (!c.secret.isEmpty()) return true;
@@ -139,6 +157,8 @@ String statusReport() {
   out += s.adblockOn ? adblock_cmd::statusSection() : String("off");
   out += "\n\n-- wake-on-lan --\n";
   out += s.wolOn ? wol_cmd::statusSection() : String("off");
+  out += "\n\n-- site monitor --\n";
+  out += s.siteOn ? site_cmd::statusSection() : String("off");
   return out;
 }
 
@@ -161,6 +181,7 @@ void handle(const String& message) {
 
   c.verb = c.tokens[0];
   c.verb.toLowerCase();
+  c.rest = afterWords(message, c.secret.isEmpty() ? 1 : 2);
   const String& v = c.verb;
 
   if (v == "help" || v == "?" || v == "commands") {
@@ -171,7 +192,7 @@ void handle(const String& message) {
     doReboot(c);
   } else if (v == "factoryreset") {
     doFactoryReset(c);
-  } else if (adblock_cmd::handle(c) || wol_cmd::handle(c)) {
+  } else if (adblock_cmd::handle(c) || wol_cmd::handle(c) || site_cmd::handle(c)) {
     // handled
   } else if (v == "add" || v == "save" || v == "rm" || v == "remove" || v == "del" ||
              v == "delete" || v == "forget") {

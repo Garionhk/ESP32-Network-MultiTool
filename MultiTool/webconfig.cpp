@@ -13,6 +13,9 @@
 #include "scheduler.h"
 #include "settings.h"
 #include "webconfig.h"
+#include "sitecheck.h"
+#include "sitestore.h"
+#include "util.h"
 #include "wol.h"
 #include "wolstore.h"
 
@@ -110,6 +113,7 @@ String nav() {
     n += "<a href=/stats>Dashboard</a><a href=/log>Query log</a><a href=/local>Local DNS</a>";
   }
   if (g_settings.wolOn) n += "<a href=/wake>Wake</a>";
+  if (g_settings.siteOn) n += "<a href=/sites>Sites</a>";
   return n + "<a href=/>Settings</a></nav>";
 }
 
@@ -872,6 +876,108 @@ void handleWakeAction() {
   sendWake("Unknown action.", false);
 }
 
+// ---- site monitor -----------------------------------------------------------
+
+String sinceText(uint32_t epoch) {
+  time_t now = time(nullptr);
+  if (!epoch || now < (time_t)NTP_MIN_VALID_EPOCH || (time_t)epoch > now) return "-";
+  return fmtDuration((uint32_t)(now - epoch));
+}
+
+String codeText(const sitelogic::Site& s) {
+  if (s.state == sitelogic::STATE_UNKNOWN) return "-";
+  if (s.type == sitelogic::TYPE_PING) return s.lastCode > 0 ? "reply" : "no reply";
+  switch (s.lastCode) {
+    case 0:  return "no connection";
+    case -1: return "no HTTP reply";
+    case -2: return "name not found";
+    case -3: return "bad URL";
+  }
+  return String(s.lastCode);
+}
+
+void sendSites(const String& note, bool good) {
+  sitestore::Snapshot snap;
+  const sitelogic::Site* list = snap.sites;
+  int n = snap.n;
+
+  String p = FPSTR(PAGE_HEAD);
+  p += nav() + "<h1>Site monitor</h1>";
+  if (!note.isEmpty()) p += String("<div class=") + (good ? "ok" : "err") + ">" + htmlEscape(note) + "</div>";
+  p += "<p><small>" + htmlEscape(sitecheck::summary()) + "</small></p>";
+
+  if (n) {
+    p += "<form method=POST action=/sites><table><tr><th>Name</th><th>Target</th><th>State</th>"
+         "<th>Since</th><th>Last</th><th></th></tr>";
+    for (int i = 0; i < n; i++) {
+      const sitelogic::Site& s = list[i];
+      const char* cls = s.state == sitelogic::STATE_UP ? "c" : s.state == sitelogic::STATE_DOWN ? "b" : "f";
+      String nm = htmlEscape(s.name);
+      p += "<tr><td>" + nm + "</td><td>" + htmlEscape(s.target) + "</td><td class=" + cls + ">" +
+           sitelogic::stateName(s.state) + "</td><td>" + sinceText(s.lastChange) + "</td><td>" +
+           htmlEscape(codeText(s)) + "</td><td><button class=mini name=rm value='" + nm +
+           "' onclick=\"return confirm('Stop monitoring " + nm + "?')\">Remove</button></td></tr>";
+    }
+    p += "</table><div class=btns><button name=op value=check>Check all now</button></div></form>";
+  } else {
+    p += "<p>No sites monitored yet.</p>";
+  }
+
+  p += "<h2>Add a site (" + String(n) + "/" + String(SITE_MAX) + ")</h2>";
+  p += "<form method=POST action=/sites><input type=hidden name=op value=add>";
+  p += "<div class=row><div>" + textField("Name", "name", "", "nas") + "</div><div>" +
+       textField("Target", "target", "", "192.168.1.50 or example.com") + "</div></div>";
+  p += "<button>Add</button></form>";
+  p += "<small>An IPv4 address is pinged. A URL is used as typed; a bare host name becomes "
+       "https://<i>name</i>. 2xx and 3xx count as up; certificates are not checked. Local names "
+       "(nas, printer.lan) are looked up in Local DNS and at the router. Down and recovered "
+       "alerts, and the daily digest, go to the alerts topic when one is set.</small>";
+  server.send(200, "text/html", p);
+}
+
+bool siteOffPage() {
+  if (g_settings.siteOn) return false;
+  String p = FPSTR(PAGE_HEAD);
+  p += nav() + "<h1>Site monitor is off</h1><p>Turn it on under Features in "
+       "<a href=/>Settings</a>.</p>";
+  server.send(200, "text/html", p);
+  return true;
+}
+
+void handleSites() {
+  if (!authorized()) return;
+  if (siteOffPage()) return;
+  sendSites("", true);
+}
+
+void handleSitesAction() {
+  if (!authorized()) return;
+  if (siteOffPage()) return;
+
+  if (server.hasArg("rm")) {
+    String stored;
+    bool ok = sitestore::remove(server.arg("rm"), &stored);
+    sendSites(ok ? "Stopped monitoring " + stored + "." : "No such site.", ok);
+    return;
+  }
+  String op = server.arg("op");
+  if (op == "check") {
+    bool ok = sitecheck::checkNow();
+    sendSites(ok ? "Checking now. Reload this page in a minute."
+                 : (sitestore::count() ? "A check is already running." : "Nothing to check."), ok);
+    return;
+  }
+  if (op == "add") {
+    sitelogic::Site s;
+    sitestore::AddResult r = sitestore::add(trimmedArg("name"), trimmedArg("target"), &s);
+    bool ok = r == sitestore::AddResult::Ok;
+    sendSites(ok ? String("Added ") + s.name + " (" + s.target + "). It is checked on the next pass."
+                 : String("Not added: ") + sitestore::addMessage(r) + ".", ok);
+    return;
+  }
+  sendSites("Unknown action.", false);
+}
+
 void handleLocal() {
   if (!authorized()) return;
   if (adblockOffPage()) return;
@@ -914,6 +1020,8 @@ void routes() {
   server.on("/local", HTTP_POST, handleLocalSave);
   server.on("/wake", HTTP_GET, handleWake);
   server.on("/wake", HTTP_POST, handleWakeAction);
+  server.on("/sites", HTTP_GET, handleSites);
+  server.on("/sites", HTTP_POST, handleSitesAction);
   server.onNotFound(handleNotFound);
   done = true;
 }

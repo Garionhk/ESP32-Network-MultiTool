@@ -70,6 +70,21 @@
 #define WOL_REPEATS           3   // magic packets per wake request
 #define WOL_REPEAT_GAP_MS   100   // pause between repeats
 
+// ---- Site monitor (from SiteCheck 2.0.0) -----------------------------------
+#define SITE_MAX              30     // monitored sites
+#define SITE_NAME_LEN         24     // including the terminating NUL
+#define SITE_TARGET_LEN       96
+#define SITE_PATH             "/sites.json"
+#define SITE_TMP_PATH         "/sites.tmp"
+#define SITE_HTTP_TIMEOUT_MS  8000   // connect + status line, per attempt
+#define SITE_PING_COUNT       2      // ICMP echoes; any reply counts as up
+#define SITE_GAP_MS           250    // between sites, so sockets close and the heap settles
+#define SITE_FIRST_PASS_MS    (30UL * 1000)   // after coming online
+#define SITE_GATE_WAIT_MS     60000UL         // an HTTPS probe waits this long for the TLS gate
+#define SITE_TASK_STACK       (8 * 1024)
+#define SITE_TASK_PRIORITY    1      // below the DNS tasks (3) and DoT (2)
+#define SITE_USER_AGENT       "MultiTool-SiteCheck/" APP_VERSION
+
 // ---- ntfy outbox ---------------------------------------------------------
 // ntfy::publish() only queues; the main loop sends one message per pass when
 // the TLS gate is free. Slots live in PSRAM. A full outbox drops the newest

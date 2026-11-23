@@ -55,6 +55,11 @@ class String {
     s = (b == std::string::npos) ? "" : s.substr(b, e - b + 1);
   }
   bool startsWith(const char* p) const { return s.rfind(p, 0) == 0; }
+  String substring(unsigned from) const { return from >= s.size() ? String() : String(s.substr(from)); }
+  String substring(unsigned from, unsigned to) const {
+    if (from >= s.size() || to <= from) return String();
+    return String(s.substr(from, to - from));
+  }
   void toLowerCase() { for (auto& c : s) c = (char)tolower((unsigned char)c); }
   bool equalsIgnoreCase(const String& o) const {
     if (s.size() != o.s.size()) return false;

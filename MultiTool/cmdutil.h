@@ -14,7 +14,12 @@ struct Ctx {
   int    n = 0;
   String verb;                 // tokens[0], lowercased
   String secret;               // the configured passphrase, trimmed; may be empty
+  String rest;                 // the raw text after the verb, trimmed -- for
+                               // arguments that may hold spaces ("A|t1; B|t2")
 };
+
+// `text` with its first `words` whitespace-separated words removed, trimmed.
+String afterWords(const String& text, int words);
 
 // State-changing commands ALWAYS need a passphrase to be set, even though the
 // router lets everything through when none is -- ntfy.sh topics are public,

@@ -19,6 +19,8 @@
 #include "sinkhole.h"
 #include "webconfig.h"
 #include "wolstore.h"
+#include "sitecheck.h"
+#include "sitestore.h"
 
 #define COMMAND_PASSPHRASE "test-passphrase"
 
@@ -53,6 +55,51 @@ static int wakeCalls = 0;
 namespace wol {
 bool wake(const uint8_t mac[6]) { (void)mac; wakeCalls++; return true; }
 }  // namespace wol
+
+// An in-memory site store with the real rules (sitelogic), so site_cmd.cpp
+// can be exercised without LittleFS; the check task is stubbed.
+namespace sitestore {
+static Site list[SITE_MAX];
+static int n = 0;
+int count() { return n; }
+int snapshot(Site* out, int max) { int c = n < max ? n : max; memcpy(out, list, sizeof(Site) * c); return c; }
+AddResult add(const String& rawName, const String& rawTarget, Site* site) {
+  String name = sitelogic::sanitize(rawName);
+  if (name.isEmpty()) return AddResult::BadName;
+  String target; uint8_t type;
+  if (!sitelogic::parseTarget(sitelogic::sanitize(rawTarget), type, target)) return AddResult::BadTarget;
+  for (int i = 0; i < n; i++) if (String(list[i].name).equalsIgnoreCase(name)) return AddResult::Duplicate;
+  if (n >= SITE_MAX) return AddResult::Full;
+  Site& s = list[n++];
+  memset(&s, 0, sizeof(s));
+  strncpy(s.name, name.c_str(), sizeof(s.name) - 1);
+  strncpy(s.target, target.c_str(), sizeof(s.target) - 1);
+  s.type = type;
+  if (site) *site = s;
+  return AddResult::Ok;
+}
+bool remove(const String& name, String* removed) {
+  for (int i = 0; i < n; i++) {
+    if (String(list[i].name).equalsIgnoreCase(sitelogic::sanitize(name))) {
+      if (removed) *removed = list[i].name;
+      for (int j = i; j + 1 < n; j++) list[j] = list[j + 1];
+      n--;
+      return true;
+    }
+  }
+  return false;
+}
+void clear() { n = 0; }
+Snapshot::Snapshot() { sites = new Site[SITE_MAX]; n = snapshot(sites, SITE_MAX); }
+Snapshot::~Snapshot() { delete[] sites; }
+}  // namespace sitestore
+
+static int checkNows = 0;
+static bool passBusy = false;
+namespace sitecheck {
+bool checkNow() { if (passBusy) return false; checkNows++; return true; }
+String summary() { return String("summary-line"); }
+}  // namespace sitecheck
 
 namespace webconfig {
 String settingsUrl() { return String("http://192.168.1.50"); }
@@ -334,6 +381,81 @@ int main() {
      "no passphrase set: wol rm refused");
   g_settings.cmdPass = COMMAND_PASSPHRASE;
 
+  // --- site monitor ---
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+  send(P "site");
+  ok(replyHas("site add <name> <target>"), "bare site lists its commands");
+  send(P "site list");
+  ok(replyHas("No sites monitored") && replyHas("site add"), "site list when empty");
+  send(P "site add web example.com");
+  ok(replyHas("Added: web (https://example.com)") && sitestore::count() == 1, "site add, bare host");
+  ok(!anyReplyLeaks(), "site add does not echo the passphrase");
+  send(P "SITE ADD nas 192.168.1.50");
+  ok(replyHas("nas (192.168.1.50)") && sitestore::list[1].type == sitelogic::TYPE_PING,
+     "site add IPv4 is a ping target, case-insensitive verb");
+  send(P "site add Web https://other.example.com");
+  ok(replyHas("Already present: Web") && sitestore::count() == 2, "site add duplicate, any case");
+  send(P "site add bad ftp://x");
+  ok(replyHas("Could not parse: bad|ftp://x"), "site add bad target");
+  send(P "site add onlyname");
+  ok(replyHas("Usage"), "site add without target shows usage");
+  send(P "site add two words here");
+  ok(replyHas("batch form"), "site add with a spaced name points at the batch form");
+
+  send(P "site add File Server|10.0.0.5; Immich | immich.example.com ;broken");
+  ok(replyHas("Added: File Server (10.0.0.5), Immich (https://immich.example.com)") &&
+     replyHas("Could not parse: broken") && sitestore::count() == 4, "batch add with spaces");
+  send(P "site ADD|Docs|docs.example.com");
+  ok(replyHas("Added: Docs") && sitestore::count() == 5, "SiteCheck's ADD|Name|target form");
+  send(P "site add |Wiki|wiki.example.com");
+  ok(replyHas("Added: Wiki"), "SiteCheck's ADD | Name | target form");
+
+  send(P "site list");
+  ok(replyHas("web: unknown") && replyHas("nas (192.168.1.50): unknown") &&
+     replyHas("summary-line"), "site list shows each site and the summary");
+  send(P "status");
+  ok(replyHas("-- site monitor --\nsummary-line"), "status has the site section");
+  sitestore::list[1].state = sitelogic::STATE_DOWN;
+  send(P "status");
+  ok(replyHas("DOWN nas"), "status names sites that are down");
+  send(P "help");
+  ok(replyHas("site add A|t1;B|t2"), "help lists site commands");
+
+  send(P "site check");
+  ok(checkNows == 1 && replyHas("Checking 6"), "site check starts a pass");
+  passBusy = true;
+  send(P "site check");
+  ok(checkNows == 1 && replyHas("already running"), "site check while running");
+  passBusy = false;
+
+  send(P "site rm file server; ghost");
+  ok(replyHas("Removed: File Server") && replyHas("Unknown name: ghost") &&
+     sitestore::count() == 5, "site rm by name with spaces, several, case-insensitive");
+  send(P "site delete Docs");
+  ok(replyHas("Removed: Docs"), "site delete alias");
+  send(P "site rm");
+  ok(replyHas("Usage"), "site rm without a name");
+  send(P "site frob");
+  ok(replyHas("Unknown site command"), "unknown site subcommand");
+
+  g_settings.siteOn = false;
+  send(P "site list");
+  ok(replyHas("turned off"), "site monitor off: commands refused");
+  send(P "status");
+  ok(replyHas("-- site monitor --\noff"), "site monitor off: status says off");
+  send(P "help");
+  ok(!replyHas("site add"), "site monitor off: help omits it");
+  g_settings.siteOn = true;
+
+  g_settings.cmdPass = "";
+  send("site list");
+  ok(replyHas("web"), "no passphrase set: site list still answers");
+  send("site add x x.example.com");
+  ok(replyHas("Set a command passphrase") && sitestore::count() == 4, "no passphrase: site add refused");
+  send("site rm web");
+  ok(replyHas("Set a command passphrase") && sitestore::count() == 4, "no passphrase: site rm refused");
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+
   // --- feature switched off ---
   g_settings.cmdPass = COMMAND_PASSPHRASE;
   g_settings.adblockOn = false;
@@ -360,6 +482,7 @@ int main() {
   ok(replyHas("MultiTool-Setup-TEST"), "factoryreset names the setup network");
   ok(!anyReplyLeaks(), "factoryreset does not echo the passphrase");
   ok(wolstore::count() == 1, "factoryreset keeps saved computers");
+  ok(sitestore::count() == 4, "factoryreset keeps sites");
   g_settings = Settings();
   settings_begin();
   ok(!g_settings.provisioned, "factoryreset cleared the stored settings");
@@ -367,7 +490,8 @@ int main() {
   g_settings.cmdPass = COMMAND_PASSPHRASE;
   send(P "factoryreset all");
   ok(g_restarted && wolstore::count() == 0, "factoryreset all forgets saved computers");
-  ok(replyHas("and saved computers"), "factoryreset all says so");
+  ok(sitestore::count() == 0, "factoryreset all forgets sites");
+  ok(replyHas("saved computers and sites"), "factoryreset all says so");
 
   printf("%d/%d checks passed\n", checks - failures, checks);
   return failures ? 1 : 0;

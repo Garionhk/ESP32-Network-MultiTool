@@ -69,9 +69,15 @@ g++ "${FLAGS[@]}" -o "$OUT/test_wolstore" "$HERE/test_wolstore.cpp" "$SKETCH/wol
 "$OUT/test_wolstore"
 
 echo
+echo "=== site logic ==="
+g++ "${FLAGS[@]}" -o "$OUT/test_sitelogic" "$HERE/test_sitelogic.cpp"
+"$OUT/test_sitelogic"
+
+echo
 echo "=== commands ==="
 g++ "${FLAGS[@]}" -o "$OUT/test_commands" \
     "$HERE/test_commands.cpp" "$SKETCH/commands.cpp" "$SKETCH/adblock_cmd.cpp" \
     "$SKETCH/wol_cmd.cpp" "$SKETCH/wolstore.cpp" \
+    "$SKETCH/site_cmd.cpp" \
     "$SKETCH/settings.cpp"
 "$OUT/test_commands"
