@@ -69,7 +69,8 @@ void restart(const char* why) {
   plannedAtMagic = PLANNED_MAGIC;
   plannedMagic = PLANNED_MAGIC;
   Serial.printf("[sched] restarting: %s\n", why);
-  delay(1500);   // let the notice and the serial line get out
+  ntfy::flush(5000);   // the notice, and anything queued before it
+  delay(100);          // and the serial line
   ESP.restart();
 }
 
@@ -92,14 +93,14 @@ void tick() {
   if (millis() - lastCheckMs < 1000) return;
   lastCheckMs = millis();
   if (!clockValid()) return;
-  retryDownload();
+  if (g_settings.adblockOn) retryDownload();
 
   time_t now = time(nullptr);
   struct tm local;
   localtime_r(&now, &local);
   const Settings& s = g_settings;
 
-  if (schedule::refreshDue(local, s.refreshHour, lastRefreshYday)) {
+  if (s.adblockOn && schedule::refreshDue(local, s.refreshHour, lastRefreshYday)) {
     lastRefreshYday = local.tm_yday;
     if (blocklist::requestReload("daily refresh")) {
       Serial.println("[sched] daily blocklist refresh");

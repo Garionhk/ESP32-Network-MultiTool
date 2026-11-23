@@ -8,6 +8,7 @@
 #include "dot.h"
 #include "settings.h"
 #include "sinkhole.h"
+#include "tlsgate.h"
 
 extern const uint8_t x509_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t x509_crt_bundle_end[]   asm("_binary_x509_crt_bundle_end");
@@ -17,7 +18,6 @@ namespace {
 
 TaskHandle_t task = nullptr;
 volatile bool connectedFlag = false;
-volatile bool pausedFlag = false;
 volatile uint32_t lastConnectMs = 0;
 volatile int  failures = 0;
 
@@ -66,7 +66,8 @@ void proxyTask(void*) {
   uint32_t connectedAt = 0, framesOut = 0, framesIn = 0;
 
   for (;;) {
-    bool want = g_settings.dotEnabled && !pausedFlag && WiFi.status() == WL_CONNECTED &&
+    bool want = g_settings.dotEnabled && !tlsgate::dotMustYield() &&
+                WiFi.status() == WL_CONNECTED &&
                 time(nullptr) > (time_t)NTP_MIN_VALID_EPOCH;   // TLS needs the date
 
     if (connectedFlag && (!want || !tls->connected())) {
@@ -81,10 +82,15 @@ void proxyTask(void*) {
       }
     }
 
+    // One handshake at a time across the firmware: if a publish, probe or
+    // download holds the gate, try again on a later pass.
     if (want && !connectedFlag && millis() - lastConnectMs > DOT_RECONNECT_MS &&
-        ESP.getFreeHeap() > DOT_MIN_HEAP) {
+        tlsgate::freeInternal() > DOT_MIN_HEAP && !tlsgate::busy() &&
+        tlsgate::acquire("dot", 0, tlsgate::Need::Handshake)) {
       lastConnectMs = millis();
-      if (tls->connect(g_settings.dotHost.c_str(), g_settings.dotPort)) {
+      bool ok = tls->connect(g_settings.dotHost.c_str(), g_settings.dotPort);
+      tlsgate::release();
+      if (ok) {
         connectedFlag = true;
         connectedAt = millis();
         framesOut = framesIn = 0;
@@ -161,20 +167,23 @@ void begin() {
 }
 
 bool submit(const uint8_t* data, int len) {
-  if (!queries || !connectedFlag || pausedFlag || len > DNS_MAX_PACKET) return false;
+  if (!queries || !connectedFlag || tlsgate::dotMustYield() || len > DNS_MAX_PACKET) return false;
   static Query q;   // only the DNS task calls this
   q.len = (uint16_t)len;
   memcpy(q.data, data, len);
   return xQueueSend(queries, &q, 0) == pdTRUE;
 }
 
-bool ready() { return connectedFlag && !pausedFlag; }
+bool ready() { return connectedFlag && !tlsgate::dotMustYield(); }
 
-void pause(bool p) { pausedFlag = p; }
+bool connected() { return connectedFlag; }
 
 String status() {
   if (!g_settings.dotEnabled) return "off";
-  if (pausedFlag) return "paused for blocklist download";
+  if (tlsgate::dotMustYield()) {
+    const char* who = tlsgate::holder();
+    return String("paused for ") + (who[0] ? who : "another TLS session");
+  }
   if (connectedFlag) return "connected to " + g_settings.dotHost;
   return failures ? "not connected (" + String(failures) + " failures) -- using plain DNS"
                   : "connecting";

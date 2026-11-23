@@ -46,6 +46,14 @@ const char* K_LEDPIN  = "ledpin";
 const char* K_LEDRGB  = "ledrgb";
 const char* K_LEDLOW  = "ledlow";
 const char* K_LEDBRT  = "ledbrt";
+const char* K_MODAB   = "modab";
+const char* K_MODWOL  = "modwol";
+const char* K_MODSITE = "modsite";
+const char* K_HOSTNM  = "hostnm";
+const char* K_SITEINT = "siteint";
+const char* K_DGHOUR  = "dghour";
+const char* K_DGMIN   = "dgmin";
+const char* K_ALERTTP = "alerttp";
 const char* K_OK      = "ok";
 
 }  // namespace
@@ -99,6 +107,14 @@ void settings_begin() {
   g_settings.ledRgb        = prefs.getBool(K_LEDRGB, d.ledRgb);
   g_settings.ledActiveLow  = prefs.getBool(K_LEDLOW, d.ledActiveLow);
   g_settings.ledBright     = (uint8_t)prefs.getUInt(K_LEDBRT, d.ledBright);
+  g_settings.adblockOn     = prefs.getBool(K_MODAB, d.adblockOn);
+  g_settings.wolOn         = prefs.getBool(K_MODWOL, d.wolOn);
+  g_settings.siteOn        = prefs.getBool(K_MODSITE, d.siteOn);
+  g_settings.hostname      = prefs.getString(K_HOSTNM, d.hostname);
+  g_settings.siteIntervalMin = (uint16_t)prefs.getUInt(K_SITEINT, d.siteIntervalMin);
+  g_settings.digestHour    = (uint8_t)prefs.getUInt(K_DGHOUR, d.digestHour);
+  g_settings.digestMinute  = (uint8_t)prefs.getUInt(K_DGMIN, d.digestMinute);
+  g_settings.alertTopic    = prefs.getString(K_ALERTTP, "");
 
   prefs.end();
 
@@ -159,6 +175,14 @@ bool settings_save() {
   prefs.putBool(K_LEDRGB,    g_settings.ledRgb);
   prefs.putBool(K_LEDLOW,    g_settings.ledActiveLow);
   prefs.putUInt(K_LEDBRT,    g_settings.ledBright);
+  prefs.putBool(K_MODAB,     g_settings.adblockOn);
+  prefs.putBool(K_MODWOL,    g_settings.wolOn);
+  prefs.putBool(K_MODSITE,   g_settings.siteOn);
+  prefs.putString(K_HOSTNM,  g_settings.hostname);
+  prefs.putUInt(K_SITEINT,   g_settings.siteIntervalMin);
+  prefs.putUInt(K_DGHOUR,    g_settings.digestHour);
+  prefs.putUInt(K_DGMIN,     g_settings.digestMinute);
+  prefs.putString(K_ALERTTP, g_settings.alertTopic);
 
   bool ok = prefs.putBool(K_OK, true) == 1;
   prefs.end();
@@ -263,4 +287,29 @@ bool parseHhMm(const String& text, uint8_t& hour, uint8_t& minute) {
   hour = (uint8_t)h;
   minute = (uint8_t)m;
   return true;
+}
+
+bool settings_validHostname(String& name) {
+  name.trim();
+  name.toLowerCase();
+  if (name.isEmpty() || name.length() > 32) return false;
+  if (name[0] == '-' || name[name.length() - 1] == '-') return false;
+  for (unsigned int i = 0; i < name.length(); i++) {
+    char c = name[i];
+    if (!(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '-') return false;
+  }
+  return true;
+}
+
+bool settings_validTopic(const String& t) {
+  if (t.isEmpty() || t.length() > 64) return false;
+  for (unsigned int i = 0; i < t.length(); i++) {
+    char c = t[i];
+    if (!isalnum((unsigned char)c) && c != '-' && c != '_') return false;
+  }
+  return true;
+}
+
+bool settings_validSiteInterval(long minutes) {
+  return minutes >= 5 && minutes <= 1440;
 }

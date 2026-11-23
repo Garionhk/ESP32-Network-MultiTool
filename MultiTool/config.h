@@ -53,6 +53,25 @@
 #define DOT_RECONNECT_MS      10000UL
 #define DOT_TASK_STACK        (8 * 1024)
 
+// ---- TLS gate (tlsgate.h) -----------------------------------------------
+// A short-lived TLS session is started without asking DoT to step aside only
+// when internal RAM has this much free and a block this large (mbedTLS wants
+// a ~16 KB receive buffer in one piece, plus the handshake's working set).
+#define TLS_MIN_FREE          (55 * 1024)
+#define TLS_MIN_BLOCK         (24 * 1024)
+#define TLS_YIELD_WAIT_MS     3000UL   // how long to wait for DoT to disconnect
+#define BL_GATE_WAIT_MS       120000UL // blocklist download waits this long for the gate
+
+// ---- ntfy outbox ---------------------------------------------------------
+// ntfy::publish() only queues; the main loop sends one message per pass when
+// the TLS gate is free. Slots live in PSRAM. A full outbox drops the newest
+// message (and says so on serial) rather than blocking the caller.
+#define NTFY_OUTBOX_SLOTS       16
+#define NTFY_OUTBOX_BODY      3072    // longer messages are cut with "..."
+#define NTFY_OUTBOX_TITLE       64
+#define NTFY_SEND_RETRIES        3    // attempts before a message is dropped
+#define NTFY_RETRY_GAP_MS     5000UL
+
 // ---- ntfy ---------------------------------------------------------------
 // Server host, port, TLS, login and topic live in NVS -- they describe your
 // deployment. Only behaviour tuning belongs here.

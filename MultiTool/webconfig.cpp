@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <DNSServer.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include <WiFi.h>
 
@@ -24,6 +25,7 @@ bool captiveOn   = false;
 bool authNeeded  = true;
 bool running     = false;
 bool savedFlag   = false;
+bool mdnsUp      = false;
 
 // POSIX TZ strings for the picker. Anything else goes in the custom field.
 struct Zone { const char* label; const char* tz; };
@@ -101,8 +103,23 @@ const char PAGE_HEAD[] PROGMEM =
 
 String nav() {
   if (apMode) return "";
-  return "<nav><a href=/status>Status</a><a href=/stats>Dashboard</a><a href=/log>Query log</a>"
-         "<a href=/local>Local DNS</a><a href=/>Settings</a></nav>";
+  String n = "<nav><a href=/status>Status</a>";
+  if (g_settings.adblockOn) {
+    n += "<a href=/stats>Dashboard</a><a href=/log>Query log</a><a href=/local>Local DNS</a>";
+  }
+  return n + "<a href=/>Settings</a></nav>";
+}
+
+// The ad blocker's pages and actions when the feature is switched off.
+// Returns true (and has answered) if it is off.
+bool adblockOffPage() {
+  if (g_settings.adblockOn) return false;
+  String p = FPSTR(PAGE_HEAD);
+  p += nav();
+  p += "<h1>Ad blocker is off</h1><p>Turn it on under Features in "
+       "<a href=/>Settings</a>.</p>";
+  server.send(200, "text/html", p);
+  return true;
 }
 
 // Returns false and sends the challenge if the request should be rejected.
@@ -167,6 +184,17 @@ void sendForm(const String& error) {
        "' required><datalist id=nets></datalist>";
   p += "<label>Password</label><input type=password name=wpass>";
   p += "<small>Leave blank to keep the stored password.</small>";
+  p += textField("Device name", "hostnm", s.hostname, "multitool");
+  p += "<small>Shown to your router, and the page answers at http://<i>name</i>.local.</small>";
+
+  p += "<h2>Features</h2>";
+  p += "<label><input type=checkbox name=modab" + String(s.adblockOn ? " checked" : "") +
+       "> Ad blocker (DNS server on port 53)</label>";
+  p += "<label><input type=checkbox name=modwol" + String(s.wolOn ? " checked" : "") +
+       "> Wake-on-LAN</label>";
+  p += "<label><input type=checkbox name=modsite" + String(s.siteOn ? " checked" : "") +
+       "> Site monitor</label>";
+  p += "<small>A feature that is off uses no memory and ignores its commands.</small>";
 
   p += "<h2>Address <small>(blank = DHCP)</small></h2>";
   p += "<small>Your router hands this device's IP to everyone as their DNS server, so "
@@ -225,6 +253,15 @@ void sendForm(const String& error) {
   p += textField("or custom POSIX TZ string", "tzcustom", known ? String("") : s.tz,
                  "e.g. EST5EDT,M3.2.0,M11.1.0");
 
+  p += "<h2>Site monitor</h2>";
+  p += "<div class=row><div><label>Check every (minutes, 5-1440)</label>"
+       "<input type=number name=siteint min=5 max=1440 value='" + String(s.siteIntervalMin) +
+       "'></div>";
+  char dg[6];
+  snprintf(dg, sizeof(dg), "%02u:%02u", s.digestHour, s.digestMinute);
+  p += "<div><label>Daily digest at</label><input type=time name=dgtime value='" + String(dg) +
+       "'></div></div>";
+
   p += "<h2>Status LED</h2>";
   p += "<div class=row><div><label>GPIO (0 = none)</label>"
        "<input type=number name=ledpin min=0 max=48 value='" + String(s.ledPin) + "'></div>";
@@ -251,6 +288,9 @@ void sendForm(const String& error) {
        htmlEscape(s.ntfyTopic) + "' required>";
   p += "<small>Status messages, commands and replies share this topic. Make it long "
        "and unguessable.</small>";
+  p += textField("Alerts topic (optional)", "alerttp", s.alertTopic, "blank = same topic");
+  p += "<small>Site down / recovered alerts and the daily digest go here instead, so they "
+       "can ring differently. Commands are only read from the topic above.</small>";
 
   p += "<h2>ntfy login <small>(blank for an open server)</small></h2>";
   p += "<label>Username</label><input type=text name=nuser value='" +
@@ -286,14 +326,7 @@ void handleRoot() {
 }
 
 // ntfy topics are [-_A-Za-z0-9]{1,64}; anything else would also break the URL.
-bool validTopic(const String& t) {
-  if (t.isEmpty() || t.length() > 64) return false;
-  for (unsigned int i = 0; i < t.length(); i++) {
-    char c = t[i];
-    if (!isalnum((unsigned char)c) && c != '-' && c != '_') return false;
-  }
-  return true;
-}
+bool validTopic(const String& t) { return settings_validTopic(t); }
 
 bool validTz(const String& tz) {
   if (tz.isEmpty() || tz.length() > 60) return false;
@@ -328,6 +361,9 @@ void handleSave() {
   long   refresh = server.arg("refresh").toInt();
   long   ledPin  = server.arg("ledpin").toInt();
   long   ledBrt  = server.arg("ledbrt").toInt();
+  long   siteInt = server.arg("siteint").toInt();
+  String hostnm  = trimmedArg("hostnm");
+  String alerttp = trimmedArg("alerttp");
 
   if (ssid.isEmpty())               { sendForm("WiFi network is required."); return; }
   if (host.isEmpty())               { sendForm("ntfy host is required."); return; }
@@ -397,6 +433,24 @@ void handleSave() {
     return;
   }
   if (ledBrt < 1 || ledBrt > 255) { sendForm("LED brightness must be 1-255."); return; }
+  if (!settings_validHostname(hostnm)) {
+    sendForm("Device name must be 1-32 letters, digits or -, not starting or ending with -.");
+    return;
+  }
+  if (!settings_validSiteInterval(siteInt)) {
+    sendForm("Site check interval must be 5-1440 minutes.");
+    return;
+  }
+  uint8_t dh = 0, dm = 0;
+  if (!parseHhMm(server.arg("dgtime"), dh, dm)) {
+    sendForm("Digest time must be HH:MM.");
+    return;
+  }
+  if (!alerttp.isEmpty() && !validTopic(alerttp)) {
+    sendForm("Alerts topic must be 1-64 letters, digits, - or _, or blank.");
+    return;
+  }
+  if (alerttp == topic) alerttp = "";   // same topic: no point storing it twice
 
   // Blank password fields mean "keep what is stored" -- the form never renders
   // a stored password back to the browser, so blank is the normal state.
@@ -452,6 +506,14 @@ void handleSave() {
   s.ledBright     = (uint8_t)ledBrt;
   s.ledRgb        = server.arg("ledtype") != "mono";
   s.ledActiveLow  = server.hasArg("ledlow");
+  s.hostname      = hostnm;
+  s.adblockOn     = server.hasArg("modab");
+  s.wolOn         = server.hasArg("modwol");
+  s.siteOn        = server.hasArg("modsite");
+  s.siteIntervalMin = (uint16_t)siteInt;
+  s.digestHour    = dh;
+  s.digestMinute  = dm;
+  s.alertTopic    = alerttp;
   s.ntfyHost      = host;
   s.ntfyPort      = (uint16_t)port;
   s.ntfyTls       = server.hasArg("tls");
@@ -496,6 +558,7 @@ void sendStatus(const String& note, bool good) {
                             htmlEscape(note) + "</div>";
   p += "<pre>" + htmlEscape(commands::statusReport()) + "</pre>";
 
+  if (g_settings.adblockOn) {
   p += "<form method=POST action=/action>";
   p += "<label>Domain</label><input type=text name=domain placeholder='ads.example.com'>";
   p += "<div class=btns><button name=op value=check>Check</button>"
@@ -508,6 +571,11 @@ void sendStatus(const String& note, bool good) {
        "</div></form>";
   p += "<p><small>Blocks and unblocks are kept in a custom list in flash and survive "
        "reloads and reboots.</small></p>";
+  } else {
+    p += "<form method=POST action=/action><div class=btns>"
+         "<button name=op value=reboot onclick=\"return confirm('Reboot now?')\">Reboot</button>"
+         "</div></form>";
+  }
   server.send(200, "text/html", p);
 }
 
@@ -520,6 +588,7 @@ void handleAction() {
   if (!authorized()) return;
   String op = server.arg("op");
   String domain = trimmedArg("domain");
+  if (op != "reboot" && adblockOffPage()) return;
 
   if (op == "check" || op == "block" || op == "unblock") {
     if (domain.isEmpty()) { sendStatus("Enter a domain first.", false); return; }
@@ -598,6 +667,7 @@ String hourChart() {
 
 void handleStats() {
   if (!authorized()) return;
+  if (adblockOffPage()) return;
   sinkhole::Stats d = sinkhole::stats();
   String p = FPSTR(PAGE_HEAD);
   p += "<body class=wide>" + nav() + "<h1>Dashboard</h1>";
@@ -642,6 +712,7 @@ const char* typeName(uint16_t t) {
 
 void handleLog() {
   if (!authorized()) return;
+  if (adblockOffPage()) return;
   LogFilter f;
   f.client = trimmedArg("client");
   f.q = trimmedArg("q");
@@ -701,11 +772,13 @@ void sendLocal(const String& note, bool good) {
 
 void handleLocal() {
   if (!authorized()) return;
+  if (adblockOffPage()) return;
   sendLocal("", true);
 }
 
 void handleLocalSave() {
   if (!authorized()) return;
+  if (adblockOffPage()) return;
   String t = server.arg("hosts");
   t.replace("\r", "");
   int records = 0, bad = 0;
@@ -779,8 +852,15 @@ void beginSTA() {
   server.begin();
   running = true;
 
-  Serial.printf("[web] settings page at http://%s\n",
-                WiFi.localIP().toString().c_str());
+  // http://<hostname>.local. mDNS runs on raw lwIP PCBs, so it costs none of
+  // the 16 sockets.
+  if (MDNS.begin(g_settings.hostname.c_str())) {
+    MDNS.addService("http", "tcp", 80);
+    mdnsUp = true;
+  }
+
+  Serial.printf("[web] settings page at http://%s (http://%s.local)\n",
+                WiFi.localIP().toString().c_str(), g_settings.hostname.c_str());
 }
 
 void stop() {
@@ -788,6 +868,8 @@ void stop() {
   server.stop();
   if (captiveOn) captiveDns.stop();
   captiveOn = false;
+  if (mdnsUp) MDNS.end();
+  mdnsUp = false;
   running = false;
 }
 

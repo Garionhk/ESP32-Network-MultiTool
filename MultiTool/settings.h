@@ -82,6 +82,27 @@ struct Settings {
   bool     ledActiveLow = false;   // single-colour only
   uint8_t  ledBright    = 16;      // 1-255
 
+  // ---- MultiTool ----------------------------------------------------------
+  // Feature switches. A feature that is off starts no task, binds no port and
+  // answers its commands with "turned off".
+  bool     adblockOn = true;
+  bool     wolOn     = true;
+  bool     siteOn    = true;
+
+  // Network name for DHCP and mDNS (http://<hostname>.local).
+  String   hostname = "multitool";
+
+  // Site monitor: minutes between check passes, and the local time of the
+  // daily digest.
+  uint16_t siteIntervalMin = 30;
+  uint8_t  digestHour      = 8;
+  uint8_t  digestMinute    = 0;
+
+  // Optional second ntfy topic for site alerts and the digest. Blank sends
+  // them to ntfyTopic with everything else. Publish-only: commands are only
+  // read from ntfyTopic.
+  String   alertTopic;
+
   bool     provisioned = false;   // the "ok" sentinel
 };
 
@@ -116,6 +137,16 @@ bool settings_validLedPin(int pin);
 
 // "HH:MM" -> hour and minute. Rejects anything outside 00:00-23:59.
 bool parseHhMm(const String& text, uint8_t& hour, uint8_t& minute);
+
+// DHCP / mDNS name: 1-32 of [a-z0-9-], not starting or ending with '-'.
+// Lowercases `name` in place.
+bool settings_validHostname(String& name);
+
+// ntfy topic name: 1-64 of [A-Za-z0-9_-].
+bool settings_validTopic(const String& topic);
+
+// Site-check interval in minutes: 5 to 1440.
+bool settings_validSiteInterval(long minutes);
 
 // Username paired with Settings::adminPass on the settings page.
 static const char* const ADMIN_USER = "admin";

@@ -17,6 +17,7 @@
 #include "blparse.h"
 #include "config.h"
 #include "dot.h"
+#include "tlsgate.h"
 #include "localdns.h"
 #include "sinkhole.h"
 #include "settings.h"
@@ -670,11 +671,13 @@ void runReload(const char* reason) {
   String error, partial;
   bool truncated = false, started = false, offline = false;
 
-  // RAM holds only so many TLS sessions: the DoT link steps aside while the
-  // list downloads, and lookups use plain DNS for those seconds.
-  dot::pause(true);
+  // RAM holds only so many TLS sessions: the download takes the TLS gate and
+  // the DoT link steps aside while it runs, so lookups use plain DNS for those
+  // seconds. Publishes and site probes queue behind it.
+  bool gated = tlsgate::acquire("blocklist download", BL_GATE_WAIT_MS, tlsgate::Need::DotOff);
+  if (!gated) Serial.println("[blocklist] TLS gate busy -- downloading anyway");
   bool ok = downloadAll(error, truncated, started, offline, partial);
-  dot::pause(false);
+  if (gated) tlsgate::release();
 
   if (ok) {
     uint32_t dups = sortAndDedupe();

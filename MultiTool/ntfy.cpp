@@ -9,6 +9,11 @@
 #include "config.h"
 #include "ntfy.h"
 #include "settings.h"
+#include "tlsgate.h"
+
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 namespace ntfy {
 namespace {
@@ -58,6 +63,8 @@ const String& authHeader() {
   return cachedAuth;
 }
 
+void drainOutbox();   // below; poll() sends from the outbox
+
 enum class State { Disconnected, Streaming };
 State state = State::Disconnected;
 
@@ -97,16 +104,17 @@ void disconnect(const char* why) {
   backoffMs = min(backoffMs * 2, (uint32_t)NTFY_RECONNECT_MAX_MS);
 }
 
+// The caller holds the TLS gate (when TLS is on): the handshake is when
+// mbedTLS needs the most memory, so only one runs at a time.
 bool connect() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  if (!stream) return false;
-
   Serial.printf("[ntfy] connecting to %s:%u (%s, heap %u)\n",
                 g_settings.ntfyHost.c_str(), (unsigned)g_settings.ntfyPort,
                 g_settings.ntfyTls ? "tls" : "plain",
                 (unsigned)ESP.getFreeHeap());
 
-  if (!stream->connect(g_settings.ntfyHost.c_str(), g_settings.ntfyPort)) {
+  bool opened = stream->connect(g_settings.ntfyHost.c_str(), g_settings.ntfyPort);
+  if (g_settings.ntfyTls) tlsgate::release();   // handshake done either way
+  if (!opened) {
     Serial.println("[ntfy] TCP/TLS connect failed");
     return false;
   }
@@ -226,9 +234,16 @@ bool connected() {
 
 void poll() {
   if (!stream) return;
+  drainOutbox();
 
   if (state == State::Disconnected) {
     if ((int32_t)(millis() - nextAttemptMs) < 0) return;
+    if (WiFi.status() != WL_CONNECTED) return;
+    // Gate busy (a download, probe or publish is handshaking): try again on
+    // the next pass, without growing the backoff.
+    if (g_settings.ntfyTls && !tlsgate::acquire("ntfy stream", 0, tlsgate::Need::Handshake)) {
+      return;
+    }
     if (!connect()) {
       nextAttemptMs = millis() + backoffMs;
       backoffMs = min(backoffMs * 2, (uint32_t)NTFY_RECONNECT_MAX_MS);
@@ -268,14 +283,90 @@ void poll() {
   }
 }
 
-bool publish(const String& message, const String& title) {
-  if (WiFi.status() != WL_CONNECTED) return false;
+namespace {
 
+// ---- outbox ---------------------------------------------------------------
+
+struct Msg {
+  uint8_t  alert;          // 1 = Settings::alertTopic when set
+  uint8_t  priority;       // 0 = no X-Priority header
+  uint8_t  tries;
+  uint32_t notBeforeMs;    // retry gap
+  uint16_t len;
+  char     title[NTFY_OUTBOX_TITLE];
+  char     tags[32];
+  char     body[NTFY_OUTBOX_BODY];
+};
+
+Msg*              ring  = nullptr;   // PSRAM
+SemaphoreHandle_t ringMu = nullptr;
+int               head  = 0;         // oldest
+int               count = 0;
+
+void copyTrunc(char* dst, size_t cap, const char* src, size_t len) {
+  if (len >= cap) {
+    memcpy(dst, src, cap - 4);
+    memcpy(dst + cap - 4, "...", 4);
+  } else {
+    memcpy(dst, src, len);
+    dst[len] = 0;
+  }
+}
+
+bool enqueue(const String& message, const String& title, bool alert, uint8_t priority,
+             const char* tags) {
+  if (!ring || !ringMu) {
+    Serial.printf("[ntfy] outbox not ready, dropped: %s\n", message.c_str());
+    return false;
+  }
+  xSemaphoreTake(ringMu, portMAX_DELAY);
+  if (count >= NTFY_OUTBOX_SLOTS) {
+    xSemaphoreGive(ringMu);
+    Serial.printf("[ntfy] outbox full, dropped: %s\n", title.c_str());
+    return false;
+  }
+  Msg& m = ring[(head + count) % NTFY_OUTBOX_SLOTS];
+  m.alert = alert ? 1 : 0;
+  m.priority = priority;
+  m.tries = 0;
+  m.notBeforeMs = 0;
+  copyTrunc(m.body, sizeof(m.body), message.c_str(), message.length());
+  m.len = (uint16_t)strlen(m.body);
+  copyTrunc(m.title, sizeof(m.title), title.c_str(), title.length());
+  copyTrunc(m.tags, sizeof(m.tags), tags, strlen(tags));
+  count++;
+  xSemaphoreGive(ringMu);
+  return true;
+}
+
+// The oldest message, or null. Producers only ever write past the tail, so
+// the head slot is stable while it is being sent, without the lock.
+Msg* front() {
+  if (!ring) return nullptr;
+  xSemaphoreTake(ringMu, portMAX_DELAY);
+  Msg* m = count ? &ring[head] : nullptr;
+  xSemaphoreGive(ringMu);
+  return m;
+}
+
+void popFront() {
+  xSemaphoreTake(ringMu, portMAX_DELAY);
+  if (count) {
+    head = (head + 1) % NTFY_OUTBOX_SLOTS;
+    count--;
+  }
+  xSemaphoreGive(ringMu);
+}
+
+// One POST. The caller holds the TLS gate when TLS is on.
+bool postMsg(const Msg& m) {
   // A short-lived client per publish, so the TLS buffers are freed straight
   // after rather than sitting alongside the subscribe connection.
   NetworkClient* client = makeClient();
   if (!client) return false;
 
+  const String& topic = (m.alert && !g_settings.alertTopic.isEmpty()) ? g_settings.alertTopic
+                                                                       : g_settings.ntfyTopic;
   int code;
   {
     // HTTPClient must be gone before the client is deleted. It keeps the
@@ -285,32 +376,94 @@ bool publish(const String& message, const String& title) {
     // block is reused, which a big blocklist load followed by the DoT
     // reconnect makes near-certain.
     HTTPClient http;
-    String url = scheme() + g_settings.ntfyHost + ":" + String(g_settings.ntfyPort) +
-                 "/" + g_settings.ntfyTopic;
+    String url = scheme() + g_settings.ntfyHost + ":" + String(g_settings.ntfyPort) + "/" + topic;
 
     if (!http.begin(*client, url)) {
       Serial.println("[ntfy] publish: begin failed");
       code = -1;
     } else {
+      String tags = NTFY_SELF_TAG;   // lets poll() ignore our own echo
+      if (m.tags[0]) tags += String(",") + m.tags;
       http.addHeader("Content-Type", "text/plain; charset=utf-8");
-      http.addHeader("X-Tags", NTFY_SELF_TAG);   // lets poll() ignore our own echo
-      if (!title.isEmpty()) http.addHeader("X-Title", title);
+      http.addHeader("X-Tags", tags);
+      if (m.title[0]) http.addHeader("X-Title", m.title);
+      if (m.priority) http.addHeader("X-Priority", String(m.priority));
       if (!authHeader().isEmpty()) http.addHeader("Authorization", authHeader());
 
-      code = http.POST((uint8_t*)message.c_str(), message.length());
+      code = http.POST((uint8_t*)m.body, m.len);
       http.end();
     }
   }
   delete client;
 
   if (code != HTTP_CODE_OK) {
-    Serial.printf("[ntfy] publish failed (%d, heap %u)\n", code,
-                  (unsigned)ESP.getFreeHeap());
+    Serial.printf("[ntfy] publish failed (%d, internal %u free)\n", code,
+                  (unsigned)tlsgate::freeInternal());
     return false;
   }
-
-  Serial.printf("[ntfy] >> %s\n", message.c_str());
+  Serial.printf("[ntfy] >> %s\n", m.body);
   return true;
+}
+
+// Sends the oldest message if it is due and the gate is free. waitMs is how
+// long to wait for the gate. True if a message left (or was given up on).
+bool sendOne(uint32_t waitMs) {
+  Msg* m = front();
+  if (!m || WiFi.status() != WL_CONNECTED) return false;
+  if ((int32_t)(millis() - m->notBeforeMs) < 0) return false;
+
+  bool tls = g_settings.ntfyTls;
+  if (tls && !tlsgate::acquire("ntfy publish", waitMs, tlsgate::Need::Room)) return false;
+  bool ok = postMsg(*m);
+  if (tls) tlsgate::release();
+
+  if (ok) {
+    popFront();
+    return true;
+  }
+  if (++m->tries >= NTFY_SEND_RETRIES) {
+    Serial.printf("[ntfy] giving up on \"%s\" after %u tries\n", m->title, (unsigned)m->tries);
+    popFront();
+    return true;
+  }
+  m->notBeforeMs = millis() + NTFY_RETRY_GAP_MS;
+  return false;
+}
+
+void drainOutbox() { sendOne(0); }
+
+}  // namespace
+
+void prealloc() {
+  if (ring) return;
+  ringMu = xSemaphoreCreateMutex();
+  ring = (Msg*)heap_caps_calloc(NTFY_OUTBOX_SLOTS, sizeof(Msg), MALLOC_CAP_SPIRAM);
+  if (!ring) ring = (Msg*)calloc(NTFY_OUTBOX_SLOTS, sizeof(Msg));   // no PSRAM: last resort
+  Serial.printf("[ntfy] outbox %u x %u B\n", (unsigned)NTFY_OUTBOX_SLOTS, (unsigned)sizeof(Msg));
+}
+
+bool publish(const String& message, const String& title) {
+  return enqueue(message, title, false, 0, "");
+}
+
+bool alert(const String& message, const String& title, uint8_t priority, const char* tags) {
+  return enqueue(message, title, true, priority, tags ? tags : "");
+}
+
+int pending() {
+  if (!ringMu) return 0;
+  xSemaphoreTake(ringMu, portMAX_DELAY);
+  int n = count;
+  xSemaphoreGive(ringMu);
+  return n;
+}
+
+bool flush(uint32_t timeoutMs) {
+  uint32_t start = millis();
+  while (pending() > 0 && millis() - start < timeoutMs) {
+    if (!sendOne(500)) delay(50);
+  }
+  return pending() == 0;
 }
 
 }  // namespace ntfy

@@ -131,6 +131,48 @@ int main() {
   settings_clear();
   ok(g_settings.dns1 == "1.1.1.1" && g_settings.rebootHour == 4, "clear restores defaults");
 
+  // --- MultiTool fields ---
+  {
+    String h = "  MultiTool ";
+    ok(settings_validHostname(h) && h == "multitool", "hostname trimmed and lowercased");
+    String bad1 = "-lead", bad2 = "trail-", bad3 = "has space", bad4 = "", bad5 = "under_score";
+    ok(!settings_validHostname(bad1), "hostname leading hyphen rejected");
+    ok(!settings_validHostname(bad2), "hostname trailing hyphen rejected");
+    ok(!settings_validHostname(bad3), "hostname with space rejected");
+    ok(!settings_validHostname(bad4), "empty hostname rejected");
+    ok(!settings_validHostname(bad5), "hostname with underscore rejected");
+    String longName(std::string(33, 'a'));
+    ok(!settings_validHostname(longName), "33-char hostname rejected");
+
+    ok(settings_validTopic("Alerts_topic-1"), "topic with letters, digits, - and _");
+    ok(!settings_validTopic("bad topic"), "topic with space rejected");
+    ok(!settings_validTopic(""), "empty topic rejected");
+    ok(!settings_validSiteInterval(4) && settings_validSiteInterval(5) &&
+       settings_validSiteInterval(1440) && !settings_validSiteInterval(1441),
+       "site interval bounds 5-1440");
+
+    Settings d;
+    ok(d.adblockOn && d.wolOn && d.siteOn, "all features default on");
+
+    Preferences::backing.clear();
+    g_settings = Settings();
+    g_settings.wifiSsid = "w";
+    g_settings.ntfyTopic = "t";
+    g_settings.wolOn = false;
+    g_settings.hostname = "lab-box";
+    g_settings.siteIntervalMin = 15;
+    g_settings.digestHour = 7;
+    g_settings.digestMinute = 30;
+    g_settings.alertTopic = "alerts";
+    ok(settings_save(), "save with new fields");
+    g_settings = Settings();
+    settings_begin();
+    ok(!g_settings.wolOn && g_settings.adblockOn && g_settings.siteOn, "feature switches round-trip");
+    ok(g_settings.hostname == "lab-box" && g_settings.siteIntervalMin == 15 &&
+       g_settings.digestHour == 7 && g_settings.digestMinute == 30 &&
+       g_settings.alertTopic == "alerts", "site and alert fields round-trip");
+  }
+
   printf("%d/%d checks passed\n", checks - failures, checks);
   return failures ? 1 : 0;
 }

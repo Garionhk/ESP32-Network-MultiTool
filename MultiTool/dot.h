@@ -21,9 +21,9 @@ bool ready();
 // once instead of waiting for a timeout.
 bool submit(const uint8_t* data, int len);
 
-// Drops the TLS connection and keeps it down until resumed. The blocklist
-// download pauses it: RAM only fits so many TLS sessions at once.
-void pause(bool paused);
+// True while the TLS connection is up. tlsgate waits on this when it has
+// asked the link to step aside (see tlsgate::dotMustYield()).
+bool connected();
 
 // "connected to one.one.one.one", "connecting", "off" ...
 String status();

@@ -51,5 +51,6 @@ g++ "${FLAGS[@]}" -o "$OUT/test_blparse" "$HERE/test_blparse.cpp"
 echo
 echo "=== commands ==="
 g++ "${FLAGS[@]}" -o "$OUT/test_commands" \
-    "$HERE/test_commands.cpp" "$SKETCH/commands.cpp" "$SKETCH/settings.cpp"
+    "$HERE/test_commands.cpp" "$SKETCH/commands.cpp" "$SKETCH/adblock_cmd.cpp" \
+    "$SKETCH/settings.cpp"
 "$OUT/test_commands"

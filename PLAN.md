@@ -111,9 +111,32 @@ Mechanics: one FreeRTOS mutex = "the transient TLS slot", plus a check of
 `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)` before each connect. If the block is too
 small, DoT is asked to disconnect, then the connect retries.
 
-**Sockets (16 max):** Phase 1 counts them precisely — DNS UDP v4/v6, DNS TCP listeners + 3
-clients, upstream UDP, DoT, ntfy stream, ntfy publish, web server + clients, mDNS, ping, site
-probe. If it is tight, `DNS_TCP_CLIENTS` drops from 3 to 2.
+**Sockets (16 max) — counted in phase 2.** Only the BSD socket API counts against
+`LWIP_MAX_SOCKETS`. DNS over UDP (sinkhole receive and upstream relay), SNTP, the lwIP
+resolver and mDNS all use raw lwIP PCBs and cost nothing.
+
+| User | Sockets at worst |
+|---|---|
+| DNS TCP listeners (v4 + v6) | 2 |
+| DNS TCP clients (`DNS_TCP_CLIENTS`) | 3 |
+| `tcpExchange` (truncated reply retried over TCP) | 1 |
+| `sinkhole::resolves` (typo check on `block`) | 1 |
+| DoT link | 1 |
+| ntfy subscribe stream | 1 |
+| Short-lived TLS: ntfy publish / blocklist download / site HTTPS probe (one at a time via `tlsgate`) | 1 |
+| Site plain-HTTP probe or ping (phase 4; one at a time in the site task) | 1 |
+| Web server listener + one client | 2 |
+| WOL magic-packet UDP (phase 3, transient) | 1 |
+| **Total** | **14 of 16** |
+
+The captive-portal DNS server (1) only runs in AP mode, when the DoT link, ntfy stream and
+site checks are down. So `DNS_TCP_CLIENTS` stays at 3 for now. The phase 5 soak test checks
+for `socket()` failures in the log.
+
+**Built in phase 2:** `tlsgate` (FreeRTOS mutex; DoT and the ntfy stream hold it only for the
+handshake; publishes hold it per POST; the blocklist download holds it with DoT forced off) and
+the ntfy outbox (16 × 3 KB slots in PSRAM, allocated before the blocklist arena; `publish()`
+queues, the main loop sends one per pass, 3 tries 5 s apart; `flush()` before every restart).
 
 **Alternative, not recommended for now:** build with ESP-IDF + Arduino as a component and set
 `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC` so TLS lives in PSRAM. That removes the limit but changes

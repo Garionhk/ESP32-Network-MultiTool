@@ -44,6 +44,8 @@ bool publish(const String& message, const String& title) {
   return true;
 }
 bool connected() { return true; }
+static int flushes = 0;
+bool flush(uint32_t) { flushes++; return true; }
 }  // namespace ntfy
 
 namespace webconfig {
@@ -245,11 +247,29 @@ int main() {
   send("factoryreset");
   ok(!g_restarted, "no passphrase set: factoryreset refused");
 
+  // --- feature switched off ---
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+  g_settings.adblockOn = false;
+  send(P "block y.example.com");
+  ok(replyHas("turned off") && !blocked.count("y.example.com"), "adblock off: block refused");
+  send(P "stats");
+  ok(replyHas("turned off"), "adblock off: stats says so");
+  send(P "status");
+  ok(replyHas("-- ad blocker --\noff") && !replyHas("162,431"), "adblock off: status section says off");
+  send(P "help");
+  ok(!replyHas("unblock <domain>") && replyHas("reboot"), "adblock off: help omits its commands");
+  send(P "frobnicate");
+  ok(replyHas("Unknown command"), "adblock off: unknown verbs still unknown");
+  g_settings.adblockOn = true;
+  send(P "help");
+  ok(replyHas("unblock <domain>"), "adblock on: help lists its commands");
+
   // --- factoryreset ---
   g_settings.cmdPass = COMMAND_PASSPHRASE;
   settings_save();
   send(P "factoryreset");
   ok(g_restarted, "factoryreset restarts");
+  ok(ntfy::flushes > 0, "factoryreset flushes the outbox before restarting");
   ok(replyHas("MultiTool-Setup-TEST"), "factoryreset names the setup network");
   ok(!anyReplyLeaks(), "factoryreset does not echo the passphrase");
   g_settings = Settings();

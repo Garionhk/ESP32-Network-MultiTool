@@ -21,6 +21,7 @@
 #include "querylog.h"
 #include "led.h"
 #include "sinkhole.h"
+#include "tlsgate.h"
 #include "ntfy.h"
 #include "scheduler.h"
 #include "settings.h"
@@ -35,6 +36,11 @@ static uint32_t lastWifiAttemptMs = 0;
 
 // Picks the LED pattern from the mode and the blocklist's state.
 static void updateLed() {
+  if (!g_settings.adblockOn) {
+    // The LED patterns describe the blocklist; without it, green means online.
+    led::show(mode != Mode::Online ? led::Pattern::ApMode : led::Pattern::Active);
+    return;
+  }
   blocklist::Stats b = blocklist::stats();
   led::show(led::choose(mode != Mode::Online,
                         b.state == blocklist::State::Loading,
@@ -119,6 +125,7 @@ static bool connectWifi(uint32_t timeoutMs) {
   Serial.printf("[wifi] joining %s (%s)\n", g_settings.wifiSsid.c_str(),
                 settings_useDhcp(g_settings) ? "DHCP" : g_settings.staticIp.c_str());
 
+  WiFi.setHostname(g_settings.hostname.c_str());   // before the interface starts
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);          // DNS answers and the ntfy socket stay snappy
   WiFi.setAutoReconnect(true);
@@ -222,11 +229,13 @@ static void goOnline() {
   // anything slow -- the moment the router hands this address out, clients
   // start asking. Until the blocklist is ready queries just pass through.
   webconfig::beginSTA();
-  sinkhole::setRouter(settings_useDhcp(g_settings) ? (uint32_t)WiFi.gatewayIP()
-                                                   : (uint32_t)ipOf(g_settings.staticGw));
-  sinkhole::begin();
+  if (g_settings.adblockOn) {
+    sinkhole::setRouter(settings_useDhcp(g_settings) ? (uint32_t)WiFi.gatewayIP()
+                                                     : (uint32_t)ipOf(g_settings.staticGw));
+    sinkhole::begin();
+  }
   bool timeOk = syncClock();
-  dot::begin();   // needs the clock for its certificate check
+  if (g_settings.adblockOn) dot::begin();   // needs the clock for its certificate check
   ntfy::begin(commands::handle);
 
   if (!announced) {
@@ -238,7 +247,9 @@ static void goOnline() {
 
   // A snapshot older than a day, or none at all, means download now rather
   // than wait for the nightly refresh.
-  if (timeOk && blocklist::snapshotStale()) blocklist::requestReload("startup");
+  if (g_settings.adblockOn && timeOk && blocklist::snapshotStale()) {
+    blocklist::requestReload("startup");
+  }
 
   Serial.printf("[boot] online, heap %u bytes free, psram %u\n",
                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
@@ -262,6 +273,7 @@ void setup() {
   Serial.println("\n\n=== " APP_NAME " v" APP_VERSION " ===");
 
   scheduler::begin();
+  tlsgate::begin();
   settings_begin();
   led::begin();
 
@@ -277,9 +289,14 @@ void setup() {
   // The query log and DNS tables take their PSRAM first; the blocklist arena
   // gets what is left. Restored from flash before WiFi is even up, so
   // blocking starts the moment DNS does.
-  querylog::begin(QUERYLOG_ENTRIES);
-  sinkhole::prealloc();
-  blocklist::begin();
+  // PSRAM is handed out in this order; anything the other features need has
+  // to be claimed here, before the blocklist takes the rest.
+  ntfy::prealloc();
+  if (g_settings.adblockOn) {
+    querylog::begin(QUERYLOG_ENTRIES);
+    sinkhole::prealloc();
+    blocklist::begin();
+  }
 
   if (!connectWifi(WIFI_CONNECT_TIMEOUT_MS)) {
     startApFallback();
