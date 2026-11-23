@@ -8,13 +8,13 @@ phone over [ntfy](https://ntfy.sh):
 | Feature | What it does | From |
 |---|---|---|
 | **Ad blocker** | Pi-hole-style DNS blocking for every device on the network, with DNS-over-TLS upstream | ESP32 AdBlocker 1.0.3 |
-| **Wake-on-LAN** | wakes your computers from anywhere: ntfy carries the command in, the board sends the magic packet on the LAN | ESP32 WOL-NTFY 2.0.1 |
-| **Site monitor** | checks up to 30 web sites and devices by HTTP(S) or ping, alerts when one goes down or comes back, sends a daily digest | SiteCheck 2.0.0 |
+| **Wake-on-LAN** | wakes up to 50 computers from anywhere: ntfy carries the command in, the board sends the magic packet on the LAN | ESP32 WOL-NTFY 2.0.1 |
+| **Site monitor** | checks up to 50 web sites and devices by HTTP(S) or ping, alerts when one goes down or comes back, sends a daily digest | SiteCheck 2.0.0 |
 
 Each feature can be switched off on the settings page; a feature that is off uses no memory and
 ignores its commands.
 
-> **Status: 1.0.1.** 457 host-side checks pass. On an N16R8 board it has been checked
+> **Status: 1.0.1.** 545 host-side checks pass. On an N16R8 board it has been checked
 > upgrading in place from ESP32 AdBlocker, installing clean into the setup portal, blocking,
 > DNS-over-TLS, ntfy, the web pages and a site-check pass (ping and HTTPS). **Upgrade from
 > 1.0.0:** it reboots in a loop when a monitored HTTPS site is slow to answer. Not yet run: the 48-hour soak test with all three
@@ -158,7 +158,7 @@ something are refused until a passphrase is set.
 |---|---|---|
 | `wake <name>` | `wol <name>` | send the magic packet; `wake all` for every computer |
 | `list` | `ls`, `wol list` | saved computers |
-| `wol add <name> <mac>` | `wol save` | remember a computer (up to 16) |
+| `wol add <name> <mac>` | `wol save` | remember a computer (up to 50) |
 | `wol rm <name>` | `remove`, `del`, `delete`, `forget` | forget one |
 
 MACs can be `aa:bb:cc:dd:ee:ff`, `aa-bb-cc-dd-ee-ff` or `aabbccddeeff`. Names are up to 20
@@ -170,7 +170,7 @@ Nothing acknowledges a magic packet, so "sent" means sent, not woken.
 | Command | Aliases | What it does |
 |---|---|---|
 | `site list` | `ls`, `status` | every site and its state, plus when the next check runs |
-| `site add <name> <target>` | `save` | monitor a site (up to 30) |
+| `site add <name> <target>` | `save` | monitor a site (up to 50) |
 | `site add A\|target1;B\|target2` | | several at once; names may contain spaces |
 | `site rm <name>` | `remove`, `del`, `delete` | stop monitoring; `site rm A;B` for several |
 | `site check` | | check every site now |
@@ -288,6 +288,21 @@ Everything in the ESP32 AdBlocker README still applies; the essentials:
 - **Capacity:** about 1–10 people or 50–80 devices. Measure with `tools/dnsload.py` (only on
   your own network).
 
+## Limits
+
+| | Limit | What sets it |
+|---|---|---|
+| Saved computers (Wake-on-LAN) | **50** | the list is one NVS value (4,000-byte cap; 50 longest-named computers use 2,401 bytes), and the `list` reply must fit one ntfy message (3,072 bytes; 2,024 at 50). `wake all` takes about 0.2 s per computer, so ~10 s for 50 |
+| Monitored sites | **50** | `site list` and the daily digest must each fit one ntfy message (2,499 bytes at 50 with the longest names). A pass where every site is down takes ~20 s per dead HTTPS site, ~17 min for 50, inside the 30-minute default. With a shorter interval a long pass simply runs straight into the next |
+| Blocked domains | about **250,000** | the PSRAM left for the list after everything else (4.7 MB) |
+| Blocklists | **4** | merged into one list |
+| Local DNS records | **128** | |
+| Query log | **6,000** queries | PSRAM; cleared on reboot |
+
+The two 50s are compile-time constants (`WOL_MAX_HOSTS` and `SITE_MAX` in
+[`config.h`](MultiTool/config.h)). Going much higher means longer ntfy replies, which are cut
+off at 3,072 bytes, and, for sites, passes that outlast the check interval.
+
 ## Daily schedule (local time)
 
 | Time | Job |
@@ -346,9 +361,10 @@ over-the-air update.
 
 ### Tests
 
-457 native checks need no board: DNS packet handling, blocklist parsing, settings and their
+545 native checks need no board: DNS packet handling, blocklist parsing, settings and their
 validation, reboot timing across DST changes, LED states, local DNS, the Wake-on-LAN store, the
-site monitor's target rules / URL parsing / alert rules / digest timing / stored format, and
+site monitor's target rules / URL parsing / alert rules / digest timing / stored format, the
+worst-case sizes behind the limits above, and
 every ntfy command with each feature on and off, including the passphrase gate.
 
 ```bash

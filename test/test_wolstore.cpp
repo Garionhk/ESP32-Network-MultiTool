@@ -101,6 +101,27 @@ int main() {
   ok(wolstore::add("wake", mac) == wolstore::AddResult::BadName, "\"wake\" rejected");
   ok(wolstore::add("listing", mac) == wolstore::AddResult::Ok, "a name merely starting with one is fine");
 
+  printf("-- WOL_MAX_HOSTS worst case\n");
+  {
+    wolstore::clear();
+    for (int i = 0; i < WOL_MAX_HOSTS; i++) {
+      char n[WOL_NAME_LEN + 1];
+      snprintf(n, sizeof n, "pc%018d", i);   // exactly WOL_NAME_LEN characters
+      uint8_t m[6] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, (uint8_t)i};
+      ok(wolstore::add(n, m) == wolstore::AddResult::Ok, "fill with longest names");
+    }
+    size_t blob = Preferences::backing[std::string(WOL_NVS_NAMESPACE) + "/" + WOL_NVS_KEY].size();
+    printf("  NVS blob at %d computers: %zu bytes (NVS string limit 4000)\n", WOL_MAX_HOSTS, blob);
+    ok(blob < 3500, "full list stays well inside the 4000-byte NVS string limit");
+    // The same text wol_cmd's "list" reply builds.
+    String reply = "Saved computers (" + String(WOL_MAX_HOSTS) + "/" + String(WOL_MAX_HOSTS) + ")\n";
+    wolstore::forEach([&reply](const String& name, const uint8_t* mac) {
+      reply += "\n" + name + "  " + wolstore::formatMac(mac);
+    });
+    printf("  list reply: %u bytes (limit %d)\n", reply.length(), NTFY_OUTBOX_BODY);
+    ok(reply.length() < NTFY_OUTBOX_BODY, "full list reply fits one ntfy message");
+  }
+
   printf("-- clear\n");
   wolstore::clear();
   ok(wolstore::count() == 0, "clear empties the list");

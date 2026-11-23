@@ -135,6 +135,24 @@ int main() {
   ok(!fromJson("{not json", back, n, SITE_MAX), "garbage rejected");
   ok(fromJson(legacy, back, n, 1) && n == 1, "capped at max");
 
+  // --- SITE_MAX worst case fits one ntfy message ---
+  {
+    static Site full[SITE_MAX];
+    for (int i = 0; i < SITE_MAX; i++) {
+      char name[SITE_NAME_LEN];
+      snprintf(name, sizeof(name), "%022d", i);   // 22 chars + NUL: the longest name
+      full[i] = mk(name, "255.255.255.255", TYPE_PING, STATE_UNKNOWN);   // longest line
+    }
+    String r = report(full, SITE_MAX);
+    printf("  worst-case report for %d sites: %u bytes (limit %d)\n", SITE_MAX, r.length(),
+           NTFY_OUTBOX_BODY);
+    ok(r.length() + 200 < NTFY_OUTBOX_BODY, "SITE_MAX report plus summary fits one ntfy message");
+    String json = toJson(full, SITE_MAX);
+    Site back2[SITE_MAX];
+    int n2 = 0;
+    ok(fromJson(json, back2, n2, SITE_MAX) && n2 == SITE_MAX, "SITE_MAX sites round-trip");
+  }
+
   printf("%d/%d checks passed\n", checks - failures, checks);
   return failures ? 1 : 0;
 }

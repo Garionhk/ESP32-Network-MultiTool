@@ -63,7 +63,10 @@
 #define BL_GATE_WAIT_MS       120000UL // blocklist download waits this long for the gate
 
 // ---- Wake-on-LAN (from ESP32 WOL-NTFY 2.0.1) ------------------------------
-#define WOL_MAX_HOSTS        16   // computers the NVS blob will hold
+// 50 computers is ~2.4 KB of JSON in one NVS string (limit 4,000 B, and the
+// settings share the partition), and the "list" reply stays ~2 KB -- one
+// ntfy message (NTFY_OUTBOX_BODY). "wake all" takes ~0.2 s per computer.
+#define WOL_MAX_HOSTS        50   // computers the NVS blob will hold
 #define WOL_NAME_LEN         20   // characters in a computer's nickname
 #define WOL_NVS_NAMESPACE    "wolntfy"   // same as WOL-NTFY, its own namespace
 #define WOL_NVS_KEY          "hosts"
@@ -71,7 +74,12 @@
 #define WOL_REPEAT_GAP_MS   100   // pause between repeats
 
 // ---- Site monitor (from SiteCheck 2.0.0) -----------------------------------
-#define SITE_MAX              30     // monitored sites
+// 50 sites: the list (130 B each) is in PSRAM, so RAM is not the limit. What
+// is: "site list" and the digest at ~50 B per site must fit one ntfy message
+// (NTFY_OUTBOX_BODY, ~2.5 KB at 50), and a pass where every site is down
+// (~20 s per dead HTTPS site) should end inside the 30-minute default
+// interval (~17 min at 50). A longer pass just starts the next one at once.
+#define SITE_MAX              50     // monitored sites
 #define SITE_NAME_LEN         24     // including the terminating NUL
 #define SITE_TARGET_LEN       96
 #define SITE_PATH             "/sites.json"

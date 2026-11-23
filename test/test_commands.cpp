@@ -322,7 +322,7 @@ int main() {
   send(P "list");
   ok(replyHas("desktop") && replyHas("11:22:33:44:55:66"), "list shows both");
   send(P "ls");
-  ok(replyHas("Saved computers (2/16)"), "ls is an alias for list");
+  ok(replyHas(("Saved computers (2/" + std::to_string(WOL_MAX_HOSTS) + ")").c_str()), "ls is an alias for list");
   send(P "wol list");
   ok(replyHas("Saved computers"), "wol list works too");
 
@@ -344,7 +344,7 @@ int main() {
   ok(replyHas("wol add <name> <mac>"), "bare wol lists its commands");
 
   send(P "status");
-  ok(replyHas("-- wake-on-lan --\ncomputers 2/16"), "status has the WOL section");
+  ok(replyHas(("-- wake-on-lan --\ncomputers 2/" + std::to_string(WOL_MAX_HOSTS)).c_str()), "status has the WOL section");
   send(P "help");
   ok(replyHas("wake <name>") && replyHas("wol add <name> <mac>"), "help lists WOL commands");
 

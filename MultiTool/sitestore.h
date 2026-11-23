@@ -4,7 +4,7 @@
 
 #include "sitelogic.h"
 
-// The monitored sites: up to SITE_MAX, in internal RAM (~4 KB), persisted to
+// The monitored sites: up to SITE_MAX, in PSRAM (130 B each), persisted to
 // /sites.json on LittleFS. The command handler, the web page and the check
 // task all use it, so every call takes a lock and copies out.
 //
