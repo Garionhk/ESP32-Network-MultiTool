@@ -62,6 +62,14 @@
 #define TLS_YIELD_WAIT_MS     3000UL   // how long to wait for DoT to disconnect
 #define BL_GATE_WAIT_MS       120000UL // blocklist download waits this long for the gate
 
+// ---- Wake-on-LAN (from ESP32 WOL-NTFY 2.0.1) ------------------------------
+#define WOL_MAX_HOSTS        16   // computers the NVS blob will hold
+#define WOL_NAME_LEN         20   // characters in a computer's nickname
+#define WOL_NVS_NAMESPACE    "wolntfy"   // same as WOL-NTFY, its own namespace
+#define WOL_NVS_KEY          "hosts"
+#define WOL_REPEATS           3   // magic packets per wake request
+#define WOL_REPEAT_GAP_MS   100   // pause between repeats
+
 // ---- ntfy outbox ---------------------------------------------------------
 // ntfy::publish() only queues; the main loop sends one message per pass when
 // the TLS gate is free. Slots live in PSRAM. A full outbox drops the newest

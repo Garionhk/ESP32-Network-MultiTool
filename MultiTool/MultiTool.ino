@@ -26,6 +26,7 @@
 #include "scheduler.h"
 #include "settings.h"
 #include "webconfig.h"
+#include "wolstore.h"
 
 // What the device is currently doing. WiFi can come and go while the portal
 // stays up, so the transitions need to be explicit.
@@ -275,6 +276,7 @@ void setup() {
   scheduler::begin();
   tlsgate::begin();
   settings_begin();
+  wolstore::begin();   // a few hundred bytes of NVS; loaded even when WOL is off
   led::begin();
 
   // Only worth waiting for on a provisioned board; otherwise setup is next anyway.

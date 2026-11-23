@@ -13,6 +13,8 @@
 #include "scheduler.h"
 #include "settings.h"
 #include "webconfig.h"
+#include "wol.h"
+#include "wolstore.h"
 
 namespace webconfig {
 namespace {
@@ -107,6 +109,7 @@ String nav() {
   if (g_settings.adblockOn) {
     n += "<a href=/stats>Dashboard</a><a href=/log>Query log</a><a href=/local>Local DNS</a>";
   }
+  if (g_settings.wolOn) n += "<a href=/wake>Wake</a>";
   return n + "<a href=/>Settings</a></nav>";
 }
 
@@ -770,6 +773,105 @@ void sendLocal(const String& note, bool good) {
   server.send(200, "text/html", p);
 }
 
+// ---- Wake-on-LAN -------------------------------------------------------------
+
+void sendWake(const String& note, bool good) {
+  String p = FPSTR(PAGE_HEAD);
+  p += nav() + "<h1>Wake-on-LAN</h1>";
+  if (!note.isEmpty()) p += String("<div class=") + (good ? "ok" : "err") + ">" + htmlEscape(note) + "</div>";
+
+  if (wolstore::count() == 0) {
+    p += "<p>No computers saved yet.</p>";
+  } else {
+    p += "<form method=POST action=/wake><table><tr><th>Name</th><th>MAC</th><th></th><th></th></tr>";
+    wolstore::forEach([&p](const String& name, const uint8_t* mac) {
+      String n = htmlEscape(name);
+      p += "<tr><td>" + n + "</td><td>" + wolstore::formatMac(mac) + "</td>"
+           "<td><button class=mini name=wake value='" + n + "'>Wake</button></td>"
+           "<td><button class=mini name=rm value='" + n + "' onclick=\"return confirm('Forget " + n +
+           "?')\">Forget</button></td></tr>";
+    });
+    p += "</table>";
+    if (wolstore::count() > 1) p += "<div class=btns><button name=wake value=all>Wake all</button></div>";
+    p += "</form>";
+  }
+
+  p += "<h2>Add a computer (" + String(wolstore::count()) + "/" + String(WOL_MAX_HOSTS) + ")</h2>";
+  p += "<form method=POST action=/wake><input type=hidden name=op value=add>";
+  p += "<div class=row><div>" + textField("Name", "name", "", "desktop") + "</div><div>" +
+       textField("MAC address", "mac", "", "aa:bb:cc:dd:ee:ff") + "</div></div>";
+  p += "<button>Save</button></form>";
+  p += "<small>Up to " + String(WOL_NAME_LEN) + " characters of a-z, 0-9, _ or -. The computer "
+       "must be on this network segment and have Wake-on-LAN turned on in its BIOS and network "
+       "driver. Nothing confirms a wake: give it a minute, then check.</small>";
+  server.send(200, "text/html", p);
+}
+
+bool wolOffPage() {
+  if (g_settings.wolOn) return false;
+  String p = FPSTR(PAGE_HEAD);
+  p += nav() + "<h1>Wake-on-LAN is off</h1><p>Turn it on under Features in "
+       "<a href=/>Settings</a>.</p>";
+  server.send(200, "text/html", p);
+  return true;
+}
+
+void handleWake() {
+  if (!authorized()) return;
+  if (wolOffPage()) return;
+  sendWake("", true);
+}
+
+void handleWakeAction() {
+  if (!authorized()) return;
+  if (wolOffPage()) return;
+
+  if (server.hasArg("wake")) {
+    String target = server.arg("wake");
+    if (target == "all") {
+      int sent = 0, n = wolstore::count();
+      wolstore::forEach([&sent](const String&, const uint8_t* mac) { if (wol::wake(mac)) sent++; });
+      sendWake("Magic packets sent to " + String(sent) + " of " + String(n) + ".", sent == n);
+      return;
+    }
+    uint8_t mac[6];
+    if (!wolstore::find(target, mac)) { sendWake("No computer named " + target + ".", false); return; }
+    bool ok = wol::wake(mac);
+    sendWake(ok ? "Magic packet sent to " + target + "."
+                : "Could not send the magic packet (is WiFi up?).", ok);
+    return;
+  }
+
+  if (server.hasArg("rm")) {
+    String name = server.arg("rm");
+    bool ok = wolstore::remove(name);
+    sendWake(ok ? "Forgot " + name + "." : "No computer named " + name + ".", ok);
+    return;
+  }
+
+  if (server.arg("op") == "add") {
+    String name = trimmedArg("name");
+    String macText = trimmedArg("mac");
+    uint8_t mac[6];
+    if (!wolstore::parseMac(macText, mac)) {
+      sendWake("\"" + macText + "\" is not a valid MAC address.", false);
+      return;
+    }
+    switch (wolstore::add(name, mac)) {
+      case wolstore::AddResult::Ok:
+        sendWake("Saved " + wolstore::normalizeName(name) + ".", true); return;
+      case wolstore::AddResult::Duplicate:
+        sendWake("There is already a computer named " + name + ".", false); return;
+      case wolstore::AddResult::Full:
+        sendWake("Storage is full.", false); return;
+      case wolstore::AddResult::BadName:
+        sendWake("Bad name: up to " + String(WOL_NAME_LEN) + " of a-z, 0-9, _ or -, not a command word.", false);
+        return;
+    }
+  }
+  sendWake("Unknown action.", false);
+}
+
 void handleLocal() {
   if (!authorized()) return;
   if (adblockOffPage()) return;
@@ -810,6 +912,8 @@ void routes() {
   server.on("/log", HTTP_GET, handleLog);
   server.on("/local", HTTP_GET, handleLocal);
   server.on("/local", HTTP_POST, handleLocalSave);
+  server.on("/wake", HTTP_GET, handleWake);
+  server.on("/wake", HTTP_POST, handleWakeAction);
   server.onNotFound(handleNotFound);
   done = true;
 }

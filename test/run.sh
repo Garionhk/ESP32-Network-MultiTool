@@ -17,7 +17,22 @@ SKETCH="$HERE/../MultiTool"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
-FLAGS=(-std=gnu++17 -w -I "$HERE/shim" -I "$SKETCH")
+JSON="${ARDUINOJSON_SRC:-$HOME/Documents/Arduino/libraries/ArduinoJson/src}"
+if [ ! -d "$JSON" ]; then
+  echo "ArduinoJson not found at $JSON" >&2
+  echo "Set ARDUINOJSON_SRC to its src/ directory." >&2
+  exit 1
+fi
+
+FLAGS=(
+  -std=gnu++17 -w
+  -DARDUINOJSON_ENABLE_ARDUINO_STRING=1
+  -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0
+  -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0
+  -DARDUINOJSON_ENABLE_PROGMEM=0
+  -DARDUINOJSON_ENABLE_STD_STRING=0
+  -I "$HERE/shim" -I "$SKETCH" -I "$JSON"
+)
 
 echo "=== settings ==="
 g++ "${FLAGS[@]}" -o "$OUT/test_settings" "$HERE/test_settings.cpp" "$SKETCH/settings.cpp"
@@ -49,8 +64,14 @@ g++ "${FLAGS[@]}" -o "$OUT/test_blparse" "$HERE/test_blparse.cpp"
 "$OUT/test_blparse"
 
 echo
+echo "=== wake-on-lan store ==="
+g++ "${FLAGS[@]}" -o "$OUT/test_wolstore" "$HERE/test_wolstore.cpp" "$SKETCH/wolstore.cpp"
+"$OUT/test_wolstore"
+
+echo
 echo "=== commands ==="
 g++ "${FLAGS[@]}" -o "$OUT/test_commands" \
     "$HERE/test_commands.cpp" "$SKETCH/commands.cpp" "$SKETCH/adblock_cmd.cpp" \
+    "$SKETCH/wol_cmd.cpp" "$SKETCH/wolstore.cpp" \
     "$SKETCH/settings.cpp"
 "$OUT/test_commands"

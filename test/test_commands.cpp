@@ -18,6 +18,7 @@
 #include "settings.h"
 #include "sinkhole.h"
 #include "webconfig.h"
+#include "wolstore.h"
 
 #define COMMAND_PASSPHRASE "test-passphrase"
 
@@ -47,6 +48,11 @@ bool connected() { return true; }
 static int flushes = 0;
 bool flush(uint32_t) { flushes++; return true; }
 }  // namespace ntfy
+
+static int wakeCalls = 0;
+namespace wol {
+bool wake(const uint8_t mac[6]) { (void)mac; wakeCalls++; return true; }
+}  // namespace wol
 
 namespace webconfig {
 String settingsUrl() { return String("http://192.168.1.50"); }
@@ -128,6 +134,7 @@ static bool replyHas(const char* needle) {
 
 static void send(const char* msg) {
   sent.clear();
+  wakeCalls = 0;
   restartReason.clear();
   g_restarted = false;
   commands::handle(String(msg));
@@ -141,6 +148,7 @@ static bool anyReplyLeaks() {
 }
 
 int main() {
+  wolstore::begin();
   g_settings.cmdPass   = COMMAND_PASSPHRASE;
   g_settings.ntfyTopic = "t";
   g_settings.wifiSsid  = "w";
@@ -247,6 +255,85 @@ int main() {
   send("factoryreset");
   ok(!g_restarted, "no passphrase set: factoryreset refused");
 
+  // --- wake-on-lan ---
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+  send(P "list");
+  ok(replyHas("No computers saved") && replyHas("wol add"), "list when empty points at wol add");
+  send(P "wol add desktop aa:bb:cc:dd:ee:ff");
+  ok(replyHas("Saved desktop") && replyHas("aa:bb:cc:dd:ee:ff"), "wol add saves");
+  ok(!anyReplyLeaks(), "wol add reply does not echo the passphrase");
+  send(P "WOL SAVE Other 11-22-33-44-55-66");
+  ok(replyHas("Saved other") && wolstore::count() == 2, "wol save alias, case-insensitive");
+  send(P "wol add desktop 99:88:77:66:55:44");
+  ok(replyHas("already a computer"), "wol add duplicate refused");
+  send(P "wol add pc not-a-mac");
+  ok(replyHas("not a valid MAC"), "wol add bad MAC refused");
+  send(P "wol add list aa:bb:cc:dd:ee:01");
+  ok(replyHas("command word") && wolstore::count() == 2, "wol add refuses a command word as name");
+  send(P "wol add only-name");
+  ok(replyHas("Usage"), "wol add without MAC shows usage");
+  send(P "list");
+  ok(replyHas("desktop") && replyHas("11:22:33:44:55:66"), "list shows both");
+  send(P "ls");
+  ok(replyHas("Saved computers (2/16)"), "ls is an alias for list");
+  send(P "wol list");
+  ok(replyHas("Saved computers"), "wol list works too");
+
+  send(P "wake desktop");
+  ok(wakeCalls == 1 && replyHas("Magic packet sent to desktop"), "wake by name");
+  send(P "wake DESKTOP");
+  ok(wakeCalls == 1, "wake is case-insensitive");
+  send(P "wol desktop");
+  ok(wakeCalls == 1 && replyHas("Magic packet"), "wol <name> still wakes (WOL-NTFY alias)");
+  send(P "wol wake other");
+  ok(wakeCalls == 1, "wol wake <name>");
+  send(P "wake all");
+  ok(wakeCalls == 2 && replyHas("Waking all 2"), "wake all hits every computer");
+  send(P "wake ghost");
+  ok(wakeCalls == 0 && replyHas("No computer named"), "wake unknown");
+  send(P "wake");
+  ok(wakeCalls == 0 && replyHas("Usage"), "wake without a name shows usage");
+  send(P "wol");
+  ok(replyHas("wol add <name> <mac>"), "bare wol lists its commands");
+
+  send(P "status");
+  ok(replyHas("-- wake-on-lan --\ncomputers 2/16"), "status has the WOL section");
+  send(P "help");
+  ok(replyHas("wake <name>") && replyHas("wol add <name> <mac>"), "help lists WOL commands");
+
+  send(P "add pc aa:bb:cc:dd:ee:02");
+  ok(replyHas("Say which list") && replyHas("wol add") && replyHas("site add") &&
+     wolstore::count() == 2, "plain add asks which list");
+  send(P "remove other");
+  ok(replyHas("wol remove") && wolstore::count() == 2, "plain remove asks which list");
+
+  send(P "wol rm other");
+  ok(replyHas("Forgot other") && wolstore::count() == 1, "wol rm forgets");
+  send(P "wol forget ghost");
+  ok(replyHas("No computer named"), "wol forget unknown");
+
+  g_settings.wolOn = false;
+  send(P "wake desktop");
+  ok(wakeCalls == 0 && replyHas("turned off"), "WOL off: wake refused");
+  send(P "list");
+  ok(replyHas("turned off"), "WOL off: list says so");
+  send(P "status");
+  ok(replyHas("-- wake-on-lan --\noff"), "WOL off: status says off");
+  send(P "help");
+  ok(!replyHas("wol add"), "WOL off: help omits it");
+  g_settings.wolOn = true;
+
+  g_settings.cmdPass = "";
+  send("wake desktop");
+  ok(wakeCalls == 1, "no passphrase set: wake still works");
+  send("wol add newpc aa:bb:cc:dd:ee:09");
+  ok(replyHas("Set a command passphrase") && wolstore::count() == 1,
+     "no passphrase set: wol add refused");
+  send("wol rm desktop");
+  ok(replyHas("Set a command passphrase") && wolstore::count() == 1,
+     "no passphrase set: wol rm refused");
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+
   // --- feature switched off ---
   g_settings.cmdPass = COMMAND_PASSPHRASE;
   g_settings.adblockOn = false;
@@ -272,9 +359,15 @@ int main() {
   ok(ntfy::flushes > 0, "factoryreset flushes the outbox before restarting");
   ok(replyHas("MultiTool-Setup-TEST"), "factoryreset names the setup network");
   ok(!anyReplyLeaks(), "factoryreset does not echo the passphrase");
+  ok(wolstore::count() == 1, "factoryreset keeps saved computers");
   g_settings = Settings();
   settings_begin();
   ok(!g_settings.provisioned, "factoryreset cleared the stored settings");
+
+  g_settings.cmdPass = COMMAND_PASSPHRASE;
+  send(P "factoryreset all");
+  ok(g_restarted && wolstore::count() == 0, "factoryreset all forgets saved computers");
+  ok(replyHas("and saved computers"), "factoryreset all says so");
 
   printf("%d/%d checks passed\n", checks - failures, checks);
   return failures ? 1 : 0;

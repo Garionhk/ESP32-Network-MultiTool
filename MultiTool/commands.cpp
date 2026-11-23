@@ -11,6 +11,8 @@
 #include "settings.h"
 #include "util.h"
 #include "webconfig.h"
+#include "wol_cmd.h"
+#include "wolstore.h"
 
 // The command router. It owns the passphrase gate and the commands that
 // belong to the whole device (help, status, reboot, factoryreset); every
@@ -62,11 +64,17 @@ void replyHelp() {
       "\n"
       "status             address, features, schedule, memory\n";
   if (g_settings.adblockOn) help += adblock_cmd::helpLines();
+  if (g_settings.wolOn) help += wol_cmd::helpLines();
   help +=
       "reboot             restart now\n"
       "factoryreset       wipe settings, reboot into setup\n"
+      "                   (\"factoryreset all\" also forgets saved computers)\n"
       "help               this message";
   if (g_settings.adblockOn) help += "\n\nA leading www. is ignored, so check example.com covers both.";
+  if (g_settings.wolOn) {
+    help += "\n\nMAC accepts aa:bb:cc:dd:ee:ff, aa-bb-cc-dd-ee-ff or aabbccddeeff. Computer "
+            "names: up to " + String(WOL_NAME_LEN) + " of a-z 0-9 _ -.";
+  }
   ntfy::publish(help, "Help");
 }
 
@@ -77,11 +85,13 @@ void doReboot(const Ctx& c) {
 
 void doFactoryReset(const Ctx& c) {
   if (!requireSecret(c, "using factoryreset", "Factory reset")) return;
-  ntfy::publish("Clearing settings. Rebooting into setup mode -- join the \"" +
-                    webconfig::apSsid() + "\" network to reconfigure. The blocklist "
-                    "and custom list stay in flash.",
+  bool all = c.n >= 2 && c.tokens[1].equalsIgnoreCase("all");
+  ntfy::publish(String("Clearing settings") + (all ? " and saved computers" : "") +
+                    ". Rebooting into setup mode -- join the \"" + webconfig::apSsid() +
+                    "\" network to reconfigure. The blocklist and custom list stay in flash.",
                 "Factory reset");
   ntfy::flush(5000);    // the reply has to leave before the restart
+  if (all) wolstore::clear();
   settings_clear();
   ESP.restart();
 }
@@ -127,6 +137,8 @@ String statusReport() {
 
   out += "\n\n-- ad blocker --\n";
   out += s.adblockOn ? adblock_cmd::statusSection() : String("off");
+  out += "\n\n-- wake-on-lan --\n";
+  out += s.wolOn ? wol_cmd::statusSection() : String("off");
   return out;
 }
 
@@ -159,8 +171,14 @@ void handle(const String& message) {
     doReboot(c);
   } else if (v == "factoryreset") {
     doFactoryReset(c);
-  } else if (adblock_cmd::handle(c)) {
+  } else if (adblock_cmd::handle(c) || wol_cmd::handle(c)) {
     // handled
+  } else if (v == "add" || v == "save" || v == "rm" || v == "remove" || v == "del" ||
+             v == "delete" || v == "forget") {
+    // Both Wake-on-LAN and the site monitor keep lists, so say which.
+    ntfy::publish("Say which list: \"wol " + v + " ...\" for a computer to wake, or "
+                  "\"site " + v + " ...\" for a site to monitor.",
+                  "Which list?");
   } else {
     ntfy::publish("Unknown command \"" + c.tokens[0] + "\". Send \"<passphrase> help\" "
                   "for the list.",
