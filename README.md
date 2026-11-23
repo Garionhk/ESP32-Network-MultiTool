@@ -1,5 +1,7 @@
 # ESP32-S3 Network MultiTool
 
+**English** | [繁體中文](README.zh-HK.md)
+
 Three home-network jobs on one ESP32-S3 N16R8 board, all reporting to and controlled from your
 phone over [ntfy](https://ntfy.sh):
 
@@ -32,7 +34,7 @@ heap 104 KB, psram 132 KB free
 
 -- ad blocker --
 upstream DNS-over-TLS, connected to one.one.one.one; fallback 1.1.1.1 / 1.0.0.1
-blocklist 210,388 domains, downloaded 3h 5m ago (from flash)
+blocklist 236,195 domains, downloaded 3h 5m ago (from flash)
 blocking on
 queries 4,812, blocked 1,377 (28%), cached 1,906
 list refresh 03:00
@@ -274,8 +276,9 @@ Everything in the ESP32 AdBlocker README still applies; the essentials:
 - **What no DNS blocker can stop:** YouTube ads, sponsored posts in Facebook / Instagram /
   TikTok, and anything served from a site's own domain. Smart TVs, apps and games see the
   biggest difference.
-- **Bypasses to close:** turn off Chrome's "Use secure DNS" (Firefox's and iCloud Private
-  Relay are switched off automatically), leave Android Private DNS on Automatic, and if your
+- **Bypasses to close:** in Chrome, set "Use secure DNS" to "With your current service
+  provider" or turn it off (Firefox's equivalent and iCloud Private Relay are switched off
+  automatically), leave Android Private DNS on Automatic, and if your
   router allows, block outgoing ports 53 and 853 from everything except the board. The Hagezi
   `doh.txt` list (above) blocks public encrypted-DNS servers.
 - **Capacity:** about 1–10 people or 50–80 devices. Measure with `tools/dnsload.py` (only on
