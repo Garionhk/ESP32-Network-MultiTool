@@ -85,6 +85,30 @@ bool resolve(const String& host, IPAddress& ip) {
 
 // ---- probes -----------------------------------------------------------------
 
+// Reads one line, sleeping between polls. Stream::readStringUntil() spins on
+// read() without ever yielding, and this task runs on core 0 above the idle
+// task: a server that accepts the connection but answers slowly starved
+// IDLE0 for the whole timeout, and the 5 s task watchdog rebooted the board.
+String readLine(NetworkClient* c, uint32_t timeoutMs) {
+  String line;
+  uint32_t start = millis();
+  while (millis() - start < timeoutMs) {
+    int a = c->available();
+    if (a > 0) {
+      while (a-- > 0) {
+        int ch = c->read();
+        if (ch < 0) break;
+        if (ch == '\n') return line;
+        if (line.length() < 256) line += (char)ch;
+      }
+      continue;
+    }
+    if (!c->connected()) break;
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  return line;
+}
+
 // One request on a fresh connection; returns the status code, or <= 0:
 //   0 connect failed, -1 no / bad status line.
 int request(bool tls, const IPAddress& ip, const String& host, uint16_t port,
@@ -118,7 +142,7 @@ int request(bool tls, const IPAddress& ip, const String& host, uint16_t port,
                  "Accept: */*\r\n"
                  "Connection: close\r\n\r\n";
     c->print(req);
-    String line = c->readStringUntil('\n');
+    String line = readLine(c, SITE_HTTP_TIMEOUT_MS);
     line.trim();
     code = sitelogic::statusCode(line);
   }

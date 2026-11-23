@@ -13,14 +13,15 @@
 
 每項功能都可以在設定頁關閉；關閉的功能不佔記憶體，亦會忽略相關指令。
 
-> **狀態：1.0.0。** 已通過 457 項主機端測試。已在 N16R8 開發板上驗證：由 ESP32 AdBlocker
-> 直接升級、全新安裝進入設定模式、攔截、DNS-over-TLS、ntfy 及網頁。尚未進行：三項功能同時
+> **狀態：1.0.1。** 已通過 457 項主機端測試。已在 N16R8 開發板上驗證：由 ESP32 AdBlocker
+> 直接升級、全新安裝進入設定模式、攔截、DNS-over-TLS、ntfy、網頁及一輪網站檢查（ping 及
+> HTTPS）。**請由 1.0.0 升級：** 1.0.0 在監察中的 HTTPS 網站回應緩慢時會不斷重新啟動。尚未進行：三項功能同時
 > 運作的 48 小時耐久測試（[PLAN.md](PLAN.md) 第 5 階段）。如發現任何異常，請開 issue 回報。
 
 `sekret status` 的回覆示例（數字僅供參考）：
 
 ```
-ESP32 Network MultiTool v1.0.0
+ESP32 Network MultiTool v1.0.1
 ip 192.168.0.254 (static)
 gw 192.168.0.1
 wifi home (-57 dBm)
@@ -63,8 +64,8 @@ computers 3/16
 
 | 檔案 | 適用情況 |
 |---|---|
-| `multitool-v1.0.0-esp32s3-n16r8.bin` | 首次安裝，經開發板的 **UART** 接口或 USB 轉序列埠轉接器連接 |
-| `multitool-v1.0.0-esp32s3-n16r8-usbcdc.bin` | 首次安裝，經開發板的**原生 USB** 接口連接 |
+| `multitool-v1.0.1-esp32s3-n16r8.bin` | 首次安裝，經開發板的 **UART** 接口或 USB 轉序列埠轉接器連接 |
+| `multitool-v1.0.1-esp32s3-n16r8-usbcdc.bin` | 首次安裝，經開發板的**原生 USB** 接口連接 |
 | `…-app.bin`／`…-usbcdc-app.bin` | 更新已在運行 MultiTool **或 ESP32 AdBlocker** 的開發板，保留設定及攔截清單 |
 
 ```bash
@@ -72,7 +73,7 @@ pip install esptool
 ```
 
 ```bash
-esptool --port /dev/cu.usbserial-XXXX --baud 921600 write-flash 0x0 multitool-v1.0.0-esp32s3-n16r8.bin
+esptool --port /dev/cu.usbserial-XXXX --baud 921600 write-flash 0x0 multitool-v1.0.1-esp32s3-n16r8.bin
 ```
 
 更新指令、連接埠名稱、校驗碼及自行編譯的方法，請參閱 [flash.md](flash.md)（英文）。

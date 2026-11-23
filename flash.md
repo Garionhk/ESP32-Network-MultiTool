@@ -105,7 +105,7 @@ esptool --port /dev/cu.usbmodem101 erase-flash
 Then write one file at `0x0`:
 
 ```bash
-esptool --port /dev/cu.usbmodem101 --baud 921600 write-flash 0x0 multitool-v1.0.0-esp32s3-n16r8-usbcdc.bin
+esptool --port /dev/cu.usbmodem101 --baud 921600 write-flash 0x0 multitool-v1.0.1-esp32s3-n16r8-usbcdc.bin
 ```
 
 ### Update (MultiTool, or a board running ESP32 AdBlocker)
@@ -114,7 +114,7 @@ Write only the application. Settings, the blocklist, your custom list, local DNS
 computers and monitored sites all stay:
 
 ```bash
-esptool --port /dev/cu.usbmodem101 --baud 921600 write-flash 0x10000 multitool-v1.0.0-esp32s3-n16r8-usbcdc-app.bin
+esptool --port /dev/cu.usbmodem101 --baud 921600 write-flash 0x10000 multitool-v1.0.1-esp32s3-n16r8-usbcdc-app.bin
 ```
 
 A board that ran **WOL-NTFY or SiteCheck** has a different partition table: do the clean start
