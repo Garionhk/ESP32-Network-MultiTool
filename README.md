@@ -14,14 +14,15 @@ phone over [ntfy](https://ntfy.sh):
 Each feature can be switched off on the settings page; a feature that is off uses no memory and
 ignores its commands.
 
-> **Status: 1.0.0-rc1.** It compiles and passes 457 host-side checks, but the merged
-> firmware has not yet had its 48-hour soak test on hardware (see [PLAN.md](PLAN.md),
-> phase 5). Expect rough edges until then.
+> **Status: 1.0.0.** 457 host-side checks pass. On an N16R8 board it has been checked
+> upgrading in place from ESP32 AdBlocker, installing clean into the setup portal, blocking,
+> DNS-over-TLS, ntfy and the web pages. Not yet run: the 48-hour soak test with all three
+> features busy ([PLAN.md](PLAN.md), phase 5). Please report anything odd as an issue.
 
 Example reply to `sekret status` (numbers are illustrative):
 
 ```
-ESP32 Network MultiTool v1.0.0-rc1
+ESP32 Network MultiTool v1.0.0
 ip 192.168.0.254 (static)
 gw 192.168.0.1
 wifi home (-57 dBm)
@@ -62,10 +63,12 @@ computers 3/16
 
 ### 1. Flash
 
+Download from the [latest release](https://github.com/Garionhk/ESP32-Network-MultiTool/releases/latest):
+
 | File | Use it when |
 |---|---|
-| `multitool-v1.0.0-rc1-esp32s3-n16r8.bin` | first install, through the board's **UART** port or a USB-serial adapter |
-| `multitool-v1.0.0-rc1-esp32s3-n16r8-usbcdc.bin` | first install, through the board's **native USB** port |
+| `multitool-v1.0.0-esp32s3-n16r8.bin` | first install, through the board's **UART** port or a USB-serial adapter |
+| `multitool-v1.0.0-esp32s3-n16r8-usbcdc.bin` | first install, through the board's **native USB** port |
 | `…-app.bin` / `…-usbcdc-app.bin` | updating a board that already runs MultiTool **or ESP32 AdBlocker**. Keeps settings and the blocklist |
 
 ```bash
@@ -73,7 +76,7 @@ pip install esptool
 ```
 
 ```bash
-esptool --port /dev/cu.usbserial-XXXX --baud 921600 write-flash 0x0 multitool-v1.0.0-rc1-esp32s3-n16r8.bin
+esptool --port /dev/cu.usbserial-XXXX --baud 921600 write-flash 0x0 multitool-v1.0.0-esp32s3-n16r8.bin
 ```
 
 [flash.md](flash.md) has the update command, port names, checksums and how to build it
