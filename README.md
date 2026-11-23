@@ -252,11 +252,20 @@ running there are about 100 KB free and each TLS connection needs 35–45 KB. So
 
 Everything in the ESP32 AdBlocker README still applies; the essentials:
 
-- **Lists:** up to 4 merged lists (HOSTS, Adblock `||domain^` or plain), about 250,000 domains.
-  Default: Hagezi Multi PRO
-  (`https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt`, ~210,000).
-  Gentler: Hagezi Multi NORMAL (`…/adblock/multi.txt`) or StevenBlack
-  (`https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts`).
+- **Lists:** up to 4 merged lists (HOSTS, Adblock `||domain^` or plain), about 250,000
+  domains in all. Combined lists past that are cut short, and the load message says
+  `TRUNCATED`. Sizes as of November 2026 (they change daily):
+
+  | List | Domains | Notes |
+  |---|---|---|
+  | **Hagezi Multi PRO** (default) `…/adblock/pro.txt` | ~236,000 | strong, few false positives; loads in full on the board |
+  | Hagezi Multi PRO++ `…/adblock/pro.plus.txt` | ~249,000 | more aggressive, occasionally breaks a site; close to the limit |
+  | Hagezi Multi NORMAL `…/adblock/multi.txt` | ~180,000 | gentler |
+  | StevenBlack unified `https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` | ~76,000 | conservative |
+  | Hagezi encrypted-DNS bypass `…/adblock/doh.txt` | ~3,600 | add as a second line next to any of the above |
+
+  `…` is `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest`. Recommended: PRO plus
+  `doh.txt`.
 - **Matching:** subdomains go with their parent (needed for Hagezi lists); the most specific
   entry wins, so `unblock cdn.example.com` works under a blocked `example.com`; CNAME-cloaked
   trackers are caught; a leading `www.` is ignored.
@@ -268,7 +277,7 @@ Everything in the ESP32 AdBlocker README still applies; the essentials:
 - **Bypasses to close:** turn off Chrome's "Use secure DNS" (Firefox's and iCloud Private
   Relay are switched off automatically), leave Android Private DNS on Automatic, and if your
   router allows, block outgoing ports 53 and 853 from everything except the board. The Hagezi
-  `doh.txt` list blocks public encrypted-DNS servers.
+  `doh.txt` list (above) blocks public encrypted-DNS servers.
 - **Capacity:** about 1–10 people or 50–80 devices. Measure with `tools/dnsload.py` (only on
   your own network).
 
